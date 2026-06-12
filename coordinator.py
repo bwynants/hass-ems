@@ -5,21 +5,23 @@ from collections import deque
 import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN, STATE_ON
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.core import split_entity_id
 from .const import (
-    DOMAIN, CONF_APPLIANCES, CONF_VOLTAGE, CONF_PEAK_TARIFF_SENSOR,
+    DOMAIN, CONF_VOLTAGE, CONF_PEAK_TARIFF_SENSOR,
     CONF_CAPACITY_TARIFF_SENSOR, CONF_MIN_SOC,CONF_BATTERY_SOC_SENSOR,
     CONF_MIN_SOC_OVERRIDE, CONF_IGNORE_BATTERY_PROTECTION,
     CONF_SOC_HYSTERESIS_PERCENT, CONF_CONNECTED_SENSOR,
-    CONF_SOLAR_PRODUCTION,
+    CONF_SOLAR_PRODUCTION, CONF_ENTITY_ID,
     CONF_NAME, CONF_PRIORITY, CONF_MAX_AMPS, CONF_MIN_AMPS,
     CONF_PARTIAL_MIN_EXCESS, CONF_HYSTERESIS_SECONDS, CONF_MIN_SWITCH_INTERVAL,
     CONF_AVERAGING_WINDOW,
     DEFAULT_VOLTAGE, DEFAULT_MIN_SOC,
     DEFAULT_HYSTERESIS, DEFAULT_MIN_SWITCH, DEFAULT_AVERAGING,
     DEFAULT_SOC_HYSTERESIS, DEFAULT_IGNORE_PROTECTION,
-    DEFAULT_MODE, CONF_RUNTIME_MODES,
+    DEFAULT_MODE, CONF_RUNTIME_MODES, CONF_AUTO_SWITCHING,
+    DEFAULT_AUTO_SWITCHING, get_appliances,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -57,6 +59,7 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
         super().__init__(hass, _LOGGER, name=DOMAIN, config_entry=entry, update_interval=timedelta(seconds=30))
         self.entry = entry
         self.appliance_states = {}
+        self._enabled = entry.options.get(CONF_AUTO_SWITCHING, DEFAULT_AUTO_SWITCHING)
         self.runtime_modes = entry.options.get(CONF_RUNTIME_MODES, {})
         self._last_excess = 0.0
         self._last_soc = None
@@ -126,11 +129,19 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self):
         data = {**self.entry.data, **self.entry.options}
-        appliances = data.get(CONF_APPLIANCES, [])
+        appliances = get_appliances(self.entry)
         _LOGGER.info("Updating solar appliance data" )
         if self._is_capacity_tariff_active(data):
             self._force_all_off()
-            return {"excess_amps": 0, "soc": self._last_soc, "active_appliances": [], "appliances": appliances}
+            if self.enabled:
+                await self._apply_appliance_states(appliances, [])
+            return {
+                "excess_amps": 0,
+                "soc": self._last_soc,
+                "active_appliances": [],
+                "appliances": appliances,
+                "auto_switching": self.enabled,
+            }
         
         _LOGGER.info("data %s", data)
         for app in appliances:
@@ -144,13 +155,24 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
 
         self._update_histories(appliances, excess_amps)
 
+        if not self.enabled:
+            return {
+                "excess_amps": round(excess_amps, 2),
+                "soc": self._last_soc,
+                "active_appliances": [],
+                "appliances": appliances,
+                "auto_switching": False,
+            }
+
         active = self._optimize_appliances(appliances, excess_amps, data)
+        await self._apply_appliance_states(appliances, active)
 
         return {
             "excess_amps": round(excess_amps, 2),
             "soc": self._last_soc,
             "active_appliances": active,
             "appliances": appliances,
+            "auto_switching": True,
         }
 
     def _is_capacity_tariff_active(self, config):
@@ -299,6 +321,41 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
             return avg_excess >= breakeven
 
         return False
+
+    async def _apply_appliance_states(
+        self, appliances: list[dict], active: list[str]
+    ) -> None:
+        """Turn managed appliances on or off to match optimizer decisions."""
+        active_set = set(active)
+        for app in appliances:
+            entity_id = app.get(CONF_ENTITY_ID)
+            if not entity_id:
+                continue
+            state = self.hass.states.get(entity_id)
+            if state is None or state.state in _UNAVAILABLE_STATES:
+                continue
+
+            should_be_on = app[CONF_NAME] in active_set
+            domain = split_entity_id(entity_id)[0]
+            currently_on = state.state == STATE_ON
+
+            if should_be_on and not currently_on:
+                await self.hass.services.async_call(
+                    domain,
+                    "turn_on",
+                    {"entity_id": entity_id},
+                    blocking=True,
+                )
+            elif not should_be_on and currently_on:
+                await self.hass.services.async_call(
+                    domain,
+                    "turn_off",
+                    {"entity_id": entity_id},
+                    blocking=True,
+                )
+
+    def _get_off_peak_status(self, config):
+        return not self._get_peak_tarriff_status(config)
 
     def _get_peak_tarriff_status(self, config):
         entity_id = config.get(CONF_PEAK_TARIFF_SENSOR)

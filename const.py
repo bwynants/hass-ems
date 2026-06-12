@@ -1,11 +1,26 @@
 """Constants for Solar Appliance Manager."""
 
+from __future__ import annotations
+
+from typing import Any
+
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 
 DOMAIN = "solar_appliance_manager"
 MANUFACTURER = "Solar Appliance Manager"
+SUBENTRY_TYPE_APPLIANCE = "appliance"
 
 PLATFORMS = [Platform.SWITCH, Platform.SENSOR, Platform.SELECT]
+
+
+def get_appliances(entry: ConfigEntry) -> list[dict[str, Any]]:
+    """Return appliance configs stored as config subentries."""
+    return [
+        dict(subentry.data)
+        for subentry in entry.subentries.values()
+        if subentry.subentry_type == SUBENTRY_TYPE_APPLIANCE
+    ]
 
 # Global configuration
 CONF_SOLAR_PRODUCTION = "solar_production_sensor"
@@ -20,6 +35,7 @@ CONF_BATTERY_PROTECTION_MODE = "battery_protection_mode"
 
 CONF_APPLIANCES = "appliances"
 CONF_RUNTIME_MODES = "runtime_modes"
+CONF_AUTO_SWITCHING = "auto_switching"
 
 # Appliance configuration
 CONF_NAME = "name"
@@ -57,3 +73,4 @@ DEFAULT_MIN_SWITCH = 300
 DEFAULT_AVERAGING = 180
 DEFAULT_SOC_HYSTERESIS = 5
 DEFAULT_IGNORE_PROTECTION = False
+DEFAULT_AUTO_SWITCHING = True

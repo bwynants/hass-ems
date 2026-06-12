@@ -6,28 +6,26 @@ import logging
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers.entity import DeviceInfo
-from .const import CONF_NAME, DOMAIN, MANUFACTURER
+from .const import DOMAIN, MANUFACTURER
 from .coordinator import SolarApplianceCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass, entry, async_add_entities):
     coordinator: SolarApplianceCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([SolarApplianceStatusSensor(coordinator)])
+    async_add_entities([SolarApplianceStatusSensor(coordinator, entry.entry_id)])
 
 
 class SolarApplianceStatusSensor(CoordinatorEntity, SensorEntity):
     """Main status sensor."""
 
-    _attr_name = "Solar Appliance Manager Status"
+    _attr_name = "Status"
     _attr_native_unit_of_measurement = None
+    _attr_icon = "mdi:solar-power"
 
-    def __init__(self, coordinator: SolarApplianceCoordinator, appliance):
+    def __init__(self, coordinator: SolarApplianceCoordinator, entry_id: str):
         super().__init__(coordinator)
-        self.appliance = appliance
-        self._attr_name = appliance[CONF_NAME]
-        self._attr_unique_id = f"{DOMAIN}_{appliance[CONF_NAME]}_sensor"
-        self._attr_icon = "mdi:solar-power"
+        self._attr_unique_id = f"{DOMAIN}_{entry_id}_status"
 
 
     @property
@@ -63,5 +61,6 @@ class SolarApplianceStatusSensor(CoordinatorEntity, SensorEntity):
             "excess_amps": data.get("excess_amps"),
             "soc": data.get("soc"),
             "active_appliances": data.get("active_appliances", []),
+            "auto_switching": data.get("auto_switching"),
             "capacity_tariff_active": self.coordinator._is_capacity_tariff_active(config),
         }

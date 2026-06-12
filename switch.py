@@ -3,19 +3,72 @@ from __future__ import annotations
 
 import logging
 
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers.entity import DeviceInfo
-from .const import DOMAIN, CONF_NAME, CONF_ENTITY_ID, MANUFACTURER
+from .const import (
+    DOMAIN,
+    CONF_NAME,
+    CONF_ENTITY_ID,
+    CONF_AUTO_SWITCHING,
+    MANUFACTURER,
+    get_appliances,
+)
 from .coordinator import SolarApplianceCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass, entry, async_add_entities):
     coordinator: SolarApplianceCoordinator = hass.data[DOMAIN][entry.entry_id]
-    appliances = entry.options.get("appliances", [])
-    entities = [SolarApplianceSwitch(coordinator, app) for app in appliances]
+    entities: list[SwitchEntity] = [SolarApplianceAutoSwitch(coordinator, entry)]
+    entities.extend(
+        SolarApplianceSwitch(coordinator, app) for app in get_appliances(entry)
+    )
     async_add_entities(entities)
+
+
+class SolarApplianceAutoSwitch(CoordinatorEntity, SwitchEntity):
+    """Switch to enable or disable automatic appliance control."""
+
+    _attr_name = "Auto Switching"
+    _attr_icon = "mdi:autorenew"
+
+    def __init__(
+        self, coordinator: SolarApplianceCoordinator, entry: ConfigEntry
+    ) -> None:
+        super().__init__(coordinator)
+        self._entry = entry
+        self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_auto_switching"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, self.coordinator.config_entry.entry_id)},
+            name="Solar Appliance Manager",
+            manufacturer=MANUFACTURER,
+        )
+
+    @property
+    def is_on(self) -> bool:
+        """Return true if automatic switching is enabled."""
+        return self.coordinator.enabled
+
+    async def async_turn_on(self) -> None:
+        """Enable automatic switching."""
+        await self._async_set_enabled(True)
+
+    async def async_turn_off(self) -> None:
+        """Disable automatic switching."""
+        await self._async_set_enabled(False)
+
+    async def _async_set_enabled(self, value: bool) -> None:
+        self.coordinator.enabled = value
+        options = dict(self._entry.options)
+        options[CONF_AUTO_SWITCHING] = value
+        self.hass.config_entries.async_update_entry(self._entry, options=options)
+        await self.coordinator.async_refresh()
+        self.async_write_ha_state()
 
 
 class SolarApplianceSwitch(CoordinatorEntity, SwitchEntity):

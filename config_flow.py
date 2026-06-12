@@ -20,6 +20,7 @@ from homeassistant.config_entries import (
 
 from .const import (
     DOMAIN,
+    SUBENTRY_TYPE_APPLIANCE,
     BATTERY_PROTECTION_MODES,
     DEFAULT_PRIORITY,
     DEFAULT_MIN_AMPS,
@@ -70,9 +71,6 @@ SWITCH_ENTITY_SELECTOR = EntitySelector(
 BINARY_SENSOR_ENTITY_SELECTOR = EntitySelector(
     EntitySelectorConfig(domain="binary_sensor")
 )
-
-SUBENTRY_TYPE_APPLIANCE = "appliance"
-
 
 class SolarApplianceConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Solar Appliance Manager."""

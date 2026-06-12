@@ -7,15 +7,17 @@ from homeassistant.components.select import SelectEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.entity import DeviceInfo
-from .const import DOMAIN, MODES, DEFAULT_MODE, CONF_RUNTIME_MODES, CONF_NAME, CONF_APPLIANCES, MANUFACTURER
+from .const import DOMAIN, MODES, DEFAULT_MODE, CONF_RUNTIME_MODES, CONF_NAME, MANUFACTURER, get_appliances
 from .coordinator import SolarApplianceCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass, entry: ConfigEntry, async_add_entities):
     coordinator: SolarApplianceCoordinator = hass.data[DOMAIN][entry.entry_id]
-    appliances = entry.options.get(CONF_APPLIANCES, [])
-    entities = [SolarApplianceModeSelect(coordinator, app, entry) for app in appliances]
+    entities = [
+        SolarApplianceModeSelect(coordinator, app, entry)
+        for app in get_appliances(entry)
+    ]
     async_add_entities(entities)
 
 
