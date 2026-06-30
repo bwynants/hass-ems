@@ -1,0 +1,237 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Energy Management System",
+        "description": "Configure the energy sources used to decide when appliances may run.",
+        "data": {
+          "solar_production_sensor": "Solar production sensor",
+          "house_load_sensor": "House load sensor",
+          "grid_export_sensor": "Grid power sensor (import positive)",
+          "peak_tariff_sensor": "Peak tariff sensor",
+          "voltage": "Grid voltage",
+          "demand_power_current_peak_sensor": "Current quarter-hour average demand sensor",
+          "demand_power_consumed_sensor": "Power-consumed sensor (for the estimate)",
+          "demand_month_max_sensor": "Monthly peak demand sensor",
+          "minimal_peak_warning": "Minimum peak warning (kW)",
+          "peak_high_safety": "High safety margin (kW)",
+          "peak_critical_safety": "Critical safety margin (kW)"
+        },
+        "data_description": {
+          "solar_production_sensor": "Sensor reporting solar production in watts (required).",
+          "house_load_sensor": "Optional sensor reporting total house load in watts.",
+          "grid_export_sensor": "Optional net grid power sensor (watts): positive when importing, negative when exporting. The exported (negative) part becomes the surplus budget; preferred over the solar minus house-load estimate.",
+          "peak_tariff_sensor": "Binary sensor that is on during peak-tariff hours.",
+          "voltage": "Voltage (or a number entity) used to convert watts to amps. Defaults to 230 V.",
+          "demand_power_current_peak_sensor": "Sensor reporting the running average power over the current 15-minute quarter. Enables the quarterly-demand sensors.",
+          "demand_power_consumed_sensor": "Sensor reporting current power consumption, used to project demand to the end of the quarter.",
+          "demand_month_max_sensor": "Sensor reporting the highest quarter-hour demand recorded this month. Required for the quarterly-demand sensors.",
+          "minimal_peak_warning": "Floor for the monthly peak in kW (e.g. 4). The limits never drop below this.",
+          "peak_high_safety": "kW subtracted from the monthly peak to set the High limit (e.g. 0.4).",
+          "peak_critical_safety": "kW subtracted from the monthly peak to set the Critical limit (e.g. 0.2)."
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "Energy Management System is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "user": {
+        "title": "Energy Management System",
+        "description": "Update the energy sources used to decide when appliances may run.",
+        "data": {
+          "solar_production_sensor": "Solar production sensor",
+          "house_load_sensor": "House load sensor",
+          "grid_export_sensor": "Grid power sensor (import positive)",
+          "peak_tariff_sensor": "Peak tariff sensor",
+          "voltage": "Grid voltage",
+          "demand_power_current_peak_sensor": "Current quarter-hour average demand sensor",
+          "demand_power_consumed_sensor": "Power-consumed sensor (for the estimate)",
+          "demand_month_max_sensor": "Monthly peak demand sensor",
+          "minimal_peak_warning": "Minimum peak warning (kW)",
+          "peak_high_safety": "High safety margin (kW)",
+          "peak_critical_safety": "Critical safety margin (kW)"
+        },
+        "data_description": {
+          "solar_production_sensor": "Sensor reporting solar production in watts (required).",
+          "house_load_sensor": "Optional sensor reporting total house load in watts.",
+          "grid_export_sensor": "Optional net grid power sensor (watts): positive when importing, negative when exporting. The exported (negative) part becomes the surplus budget; preferred over the solar minus house-load estimate.",
+          "peak_tariff_sensor": "Binary sensor that is on during peak-tariff hours.",
+          "voltage": "Voltage (or a number entity) used to convert watts to amps. Defaults to 230 V.",
+          "demand_power_current_peak_sensor": "Sensor reporting the running average power over the current 15-minute quarter. Enables the quarterly-demand sensors.",
+          "demand_power_consumed_sensor": "Sensor reporting current power consumption, used to project demand to the end of the quarter.",
+          "demand_month_max_sensor": "Sensor reporting the highest quarter-hour demand recorded this month. Required for the quarterly-demand sensors.",
+          "minimal_peak_warning": "Floor for the monthly peak in kW (e.g. 4). The limits never drop below this.",
+          "peak_high_safety": "kW subtracted from the monthly peak to set the High limit (e.g. 0.4).",
+          "peak_critical_safety": "kW subtracted from the monthly peak to set the Critical limit (e.g. 0.2)."
+        }
+      }
+    }
+  },
+  "config_subentries": {
+    "appliance": {
+      "initiate_flow": {
+        "user": "Add appliance",
+        "reconfigure": "Reconfigure appliance"
+      },
+      "entry_type": "Appliance",
+      "step": {
+        "user": {
+          "title": "Add appliance",
+          "data": {
+            "name": "Name",
+            "entity_id": "Controlled switch",
+            "priority": "Priority",
+            "min_amps": "Minimum amps",
+            "max_amps": "Maximum amps",
+            "fixed_amps": "Amps number entity",
+            "fixed_amps_hysteresis_seconds": "Amps hold time (seconds)",
+            "power_sensor": "Power sensor",
+            "partial_min_excess": "Minimum excess in partial solar (W)",
+            "connected_sensor": "Connected sensor",
+            "hysteresis_on_off_seconds": "On/off hysteresis (seconds)",
+            "averaging_window_seconds": "Averaging window (seconds)",
+            "min_soc_override": "Minimum SoC override (%)",
+            "ignore_battery_protection": "Ignore battery protection",
+            "soc_hysteresis_percent": "SoC hysteresis (%)",
+            "is_battery": "This appliance is a battery",
+            "battery_soc_sensor": "Battery state-of-charge sensor",
+            "min_soc": "Minimum battery SoC (%)",
+            "battery_protection_mode": "Battery protection mode"
+          },
+          "data_description": {
+            "priority": "Lower numbers run first when surplus is limited.",
+            "min_amps": "Minimum amps the appliance needs to run.",
+            "max_amps": "Maximum amps the appliance may draw.",
+            "fixed_amps": "Optional number entity the optimizer sets between min and max based on available excess.",
+            "fixed_amps_hysteresis_seconds": "Minimum time the amps setpoint is held before it may change again.",
+            "power_sensor": "Optional sensor reporting the appliance's real power draw (W); used for budgeting instead of an estimate.",
+            "partial_min_excess": "Minimum averaged excess required to run in partial_solar mode.",
+            "connected_sensor": "Optional binary sensor; the appliance is skipped while it is off.",
+            "hysteresis_on_off_seconds": "Minimum time an on/off state is held before it may change, to prevent rapid cycling.",
+            "averaging_window_seconds": "Window over which excess power is averaged.",
+            "min_soc_override": "Per-appliance minimum battery SoC, overriding the battery's value.",
+            "soc_hysteresis_percent": "Extra SoC above the minimum required to re-enable after a block.",
+            "is_battery": "When enabled, this appliance is treated as a battery: it provides the SoC sensor and threshold below that protect the other appliances, and is itself never blocked by SoC protection.",
+            "battery_soc_sensor": "State-of-charge sensor (%) for this battery; used to gate the other appliances.",
+            "min_soc": "Other appliances are blocked while this battery's SoC is below this value.",
+            "battery_protection_mode": "Strict turns the other appliances off immediately when the battery is below the threshold; relaxed keeps them eligible but only while solar surplus covers them (they wait for solar instead of draining the battery)."
+          }
+        },
+        "reconfigure_basic": {
+          "title": "Reconfigure appliance",
+          "data": {
+            "name": "Name",
+            "entity_id": "Controlled switch",
+            "priority": "Priority",
+            "min_amps": "Minimum amps",
+            "max_amps": "Maximum amps",
+            "fixed_amps": "Amps number entity",
+            "fixed_amps_hysteresis_seconds": "Amps hold time (seconds)",
+            "power_sensor": "Power sensor",
+            "partial_min_excess": "Minimum excess in partial solar (W)",
+            "connected_sensor": "Connected sensor",
+            "hysteresis_on_off_seconds": "On/off hysteresis (seconds)",
+            "averaging_window_seconds": "Averaging window (seconds)",
+            "min_soc_override": "Minimum SoC override (%)",
+            "ignore_battery_protection": "Ignore battery protection",
+            "soc_hysteresis_percent": "SoC hysteresis (%)",
+            "is_battery": "This appliance is a battery",
+            "battery_soc_sensor": "Battery state-of-charge sensor",
+            "min_soc": "Minimum battery SoC (%)",
+            "battery_protection_mode": "Battery protection mode"
+          },
+          "data_description": {
+            "priority": "Lower numbers run first when surplus is limited.",
+            "min_amps": "Minimum amps the appliance needs to run.",
+            "max_amps": "Maximum amps the appliance may draw.",
+            "fixed_amps": "Optional number entity the optimizer sets between min and max based on available excess.",
+            "fixed_amps_hysteresis_seconds": "Minimum time the amps setpoint is held before it may change again.",
+            "power_sensor": "Optional sensor reporting the appliance's real power draw (W); used for budgeting instead of an estimate.",
+            "partial_min_excess": "Minimum averaged excess required to run in partial_solar mode.",
+            "connected_sensor": "Optional binary sensor; the appliance is skipped while it is off.",
+            "hysteresis_on_off_seconds": "Minimum time an on/off state is held before it may change, to prevent rapid cycling.",
+            "averaging_window_seconds": "Window over which excess power is averaged.",
+            "min_soc_override": "Per-appliance minimum battery SoC, overriding the battery's value.",
+            "soc_hysteresis_percent": "Extra SoC above the minimum required to re-enable after a block.",
+            "is_battery": "When enabled, this appliance is treated as a battery: it provides the SoC sensor and threshold below that protect the other appliances, and is itself never blocked by SoC protection.",
+            "battery_soc_sensor": "State-of-charge sensor (%) for this battery; used to gate the other appliances.",
+            "min_soc": "Other appliances are blocked while this battery's SoC is below this value.",
+            "battery_protection_mode": "Strict turns the other appliances off immediately when the battery is below the threshold; relaxed keeps them eligible but only while solar surplus covers them (they wait for solar instead of draining the battery)."
+          }
+        },
+        "remove": {
+          "title": "Remove appliance",
+          "description": "Remove {name}?"
+        }
+      },
+      "abort": {
+        "reconfigure_successful": "Appliance updated.",
+        "reconfigure_not_supported": "Reconfiguration is not supported.",
+        "subentry_removed": "Appliance removed.",
+        "remove_failed": "Could not remove the appliance."
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "Status"
+      },
+      "managed_consumption": {
+        "name": "Managed Consumption"
+      },
+      "spare_amps": {
+        "name": "Spare Amps"
+      },
+      "quarterly_demand_estimate": {
+        "name": "Quarterly Demand Estimate"
+      },
+      "quarterly_demand_month_max": {
+        "name": "Quarterly Demand Month Max"
+      },
+      "quarterly_demand_high_limit": {
+        "name": "Quarterly Demand High Limit"
+      },
+      "quarterly_demand_critical_limit": {
+        "name": "Quarterly Demand Critical Limit"
+      },
+      "max_power_to_peak_limit": {
+        "name": "Max Power To Peak Limit"
+      }
+    },
+    "binary_sensor": {
+      "quarterly_demand_high": {
+        "name": "Quarterly Demand High"
+      },
+      "quarterly_demand_critical": {
+        "name": "Quarterly Demand Critical"
+      }
+    },
+    "switch": {
+      "auto_switching": {
+        "name": "Auto switching"
+      }
+    },
+    "select": {
+      "appliance_mode": {
+        "state": {
+          "forced": "Forced",
+          "partial_solar": "Partial solar",
+          "full_solar": "Full solar",
+          "off_peak": "Off-peak"
+        }
+      }
+    }
+  },
+  "selector": {
+    "battery_protection_mode": {
+      "options": {
+        "strict": "Strict",
+        "relaxed": "Relaxed"
+      }
+    }
+  }
+}

@@ -1,3 +1,6 @@
+# MCP config contains a live HA token — never commit
+.mcp.json
+
 # Ignore Python cache
 __pycache__/
 *.pyc

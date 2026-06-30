@@ -1,0 +1,237 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Energy Management System",
+        "description": "Configureer de energiebronnen die bepalen wanneer apparaten mogen draaien.",
+        "data": {
+          "solar_production_sensor": "Zonneproductiesensor",
+          "house_load_sensor": "Huisverbruiksensor",
+          "grid_export_sensor": "Netvermogensensor (afname positief)",
+          "peak_tariff_sensor": "Piektariefsensor",
+          "voltage": "Netspanning",
+          "demand_power_current_peak_sensor": "Sensor gemiddelde kwartierafname (huidig kwartier)",
+          "demand_power_consumed_sensor": "Verbruiksvermogensensor (voor de schatting)",
+          "demand_month_max_sensor": "Sensor maandelijkse piekafname",
+          "minimal_peak_warning": "Minimale piekwaarschuwing (kW)",
+          "peak_high_safety": "Hoge veiligheidsmarge (kW)",
+          "peak_critical_safety": "Kritieke veiligheidsmarge (kW)"
+        },
+        "data_description": {
+          "solar_production_sensor": "Sensor die de zonneproductie in watt rapporteert (verplicht).",
+          "house_load_sensor": "Optionele sensor die het totale huisverbruik in watt rapporteert.",
+          "grid_export_sensor": "Optionele sensor voor het netto netvermogen (watt): positief bij afname, negatief bij injectie. Het geïnjecteerde (negatieve) deel wordt het overschotbudget; krijgt voorrang op de schatting zon min huisverbruik.",
+          "peak_tariff_sensor": "Binaire sensor die aan is tijdens piekuren.",
+          "voltage": "Spanning (of een getalentiteit) om watt naar ampère om te rekenen. Standaard 230 V.",
+          "demand_power_current_peak_sensor": "Sensor met het lopende gemiddelde vermogen over het huidige kwartier van 15 minuten. Activeert de kwartiervermogen-sensoren.",
+          "demand_power_consumed_sensor": "Sensor met het huidige verbruik, gebruikt om de afname tot het einde van het kwartier te voorspellen.",
+          "demand_month_max_sensor": "Sensor met de hoogste kwartierafname van deze maand. Vereist voor de kwartiervermogen-sensoren.",
+          "minimal_peak_warning": "Ondergrens voor de maandpiek in kW (bv. 4). De limieten dalen nooit hieronder.",
+          "peak_high_safety": "kW afgetrokken van de maandpiek voor de Hoge limiet (bv. 0,4).",
+          "peak_critical_safety": "kW afgetrokken van de maandpiek voor de Kritieke limiet (bv. 0,2)."
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "Energy Management System is al geconfigureerd."
+    }
+  },
+  "options": {
+    "step": {
+      "user": {
+        "title": "Energy Management System",
+        "description": "Werk de energiebronnen bij die bepalen wanneer apparaten mogen draaien.",
+        "data": {
+          "solar_production_sensor": "Zonneproductiesensor",
+          "house_load_sensor": "Huisverbruiksensor",
+          "grid_export_sensor": "Netvermogensensor (afname positief)",
+          "peak_tariff_sensor": "Piektariefsensor",
+          "voltage": "Netspanning",
+          "demand_power_current_peak_sensor": "Sensor gemiddelde kwartierafname (huidig kwartier)",
+          "demand_power_consumed_sensor": "Verbruiksvermogensensor (voor de schatting)",
+          "demand_month_max_sensor": "Sensor maandelijkse piekafname",
+          "minimal_peak_warning": "Minimale piekwaarschuwing (kW)",
+          "peak_high_safety": "Hoge veiligheidsmarge (kW)",
+          "peak_critical_safety": "Kritieke veiligheidsmarge (kW)"
+        },
+        "data_description": {
+          "solar_production_sensor": "Sensor die de zonneproductie in watt rapporteert (verplicht).",
+          "house_load_sensor": "Optionele sensor die het totale huisverbruik in watt rapporteert.",
+          "grid_export_sensor": "Optionele sensor voor het netto netvermogen (watt): positief bij afname, negatief bij injectie. Het geïnjecteerde (negatieve) deel wordt het overschotbudget; krijgt voorrang op de schatting zon min huisverbruik.",
+          "peak_tariff_sensor": "Binaire sensor die aan is tijdens piekuren.",
+          "voltage": "Spanning (of een getalentiteit) om watt naar ampère om te rekenen. Standaard 230 V.",
+          "demand_power_current_peak_sensor": "Sensor met het lopende gemiddelde vermogen over het huidige kwartier van 15 minuten. Activeert de kwartiervermogen-sensoren.",
+          "demand_power_consumed_sensor": "Sensor met het huidige verbruik, gebruikt om de afname tot het einde van het kwartier te voorspellen.",
+          "demand_month_max_sensor": "Sensor met de hoogste kwartierafname van deze maand. Vereist voor de kwartiervermogen-sensoren.",
+          "minimal_peak_warning": "Ondergrens voor de maandpiek in kW (bv. 4). De limieten dalen nooit hieronder.",
+          "peak_high_safety": "kW afgetrokken van de maandpiek voor de Hoge limiet (bv. 0,4).",
+          "peak_critical_safety": "kW afgetrokken van de maandpiek voor de Kritieke limiet (bv. 0,2)."
+        }
+      }
+    }
+  },
+  "config_subentries": {
+    "appliance": {
+      "initiate_flow": {
+        "user": "Apparaat toevoegen",
+        "reconfigure": "Apparaat herconfigureren"
+      },
+      "entry_type": "Apparaat",
+      "step": {
+        "user": {
+          "title": "Apparaat toevoegen",
+          "data": {
+            "name": "Naam",
+            "entity_id": "Aangestuurde schakelaar",
+            "priority": "Prioriteit",
+            "min_amps": "Minimale stroom (A)",
+            "max_amps": "Maximale stroom (A)",
+            "fixed_amps": "Ampère-getalentiteit",
+            "fixed_amps_hysteresis_seconds": "Vasthoudtijd ampère (seconden)",
+            "power_sensor": "Vermogenssensor",
+            "partial_min_excess": "Minimaal overschot bij gedeeltelijk zon (W)",
+            "connected_sensor": "Verbonden-sensor",
+            "hysteresis_on_off_seconds": "Aan/uit-hysteresis (seconden)",
+            "averaging_window_seconds": "Middelingsvenster (seconden)",
+            "min_soc_override": "Minimale SoC-overschrijving (%)",
+            "ignore_battery_protection": "Batterijbeveiliging negeren",
+            "soc_hysteresis_percent": "SoC-hysteresis (%)",
+            "is_battery": "Dit apparaat is een batterij",
+            "battery_soc_sensor": "Batterij-laadtoestandsensor (SoC)",
+            "min_soc": "Minimale batterij-SoC (%)",
+            "battery_protection_mode": "Batterijbeveiligingsmodus"
+          },
+          "data_description": {
+            "priority": "Lagere nummers draaien eerst wanneer het overschot beperkt is.",
+            "min_amps": "Minimale stroom die het apparaat nodig heeft om te draaien.",
+            "max_amps": "Maximale stroom die het apparaat mag trekken.",
+            "fixed_amps": "Optionele getalentiteit die de optimalisator tussen min en max instelt op basis van het beschikbare overschot.",
+            "fixed_amps_hysteresis_seconds": "Minimale tijd dat het ampère-setpunt wordt vastgehouden voordat het opnieuw mag wijzigen.",
+            "power_sensor": "Optionele sensor met het werkelijke vermogen van het apparaat (W); gebruikt voor de budgettering in plaats van een schatting.",
+            "partial_min_excess": "Minimaal gemiddeld overschot om te draaien in de modus partial_solar.",
+            "connected_sensor": "Optionele binaire sensor; het apparaat wordt overgeslagen zolang die uit is.",
+            "hysteresis_on_off_seconds": "Minimale tijd dat een aan/uit-toestand wordt vastgehouden voordat die mag wijzigen, om snel schakelen te voorkomen.",
+            "averaging_window_seconds": "Venster waarover het overschotvermogen wordt gemiddeld.",
+            "min_soc_override": "Minimale batterij-SoC per apparaat, die de waarde van de batterij overschrijft.",
+            "soc_hysteresis_percent": "Extra SoC boven het minimum die nodig is om na een blokkering opnieuw in te schakelen.",
+            "is_battery": "Indien ingeschakeld wordt dit apparaat als batterij behandeld: het levert de SoC-sensor en de onderstaande drempel die de andere apparaten beschermen, en wordt zelf nooit geblokkeerd door SoC-bescherming.",
+            "battery_soc_sensor": "Laadtoestandsensor (%) voor deze batterij; gebruikt om de andere apparaten te reguleren.",
+            "min_soc": "Andere apparaten worden geblokkeerd zolang de SoC van deze batterij onder deze waarde ligt.",
+            "battery_protection_mode": "Strikt schakelt de andere apparaten meteen uit wanneer de batterij onder de drempel zakt; soepel houdt ze inzetbaar maar alleen zolang zonne-overschot ze dekt (ze wachten op zon in plaats van de batterij te ontladen)."
+          }
+        },
+        "reconfigure_basic": {
+          "title": "Apparaat herconfigureren",
+          "data": {
+            "name": "Naam",
+            "entity_id": "Aangestuurde schakelaar",
+            "priority": "Prioriteit",
+            "min_amps": "Minimale stroom (A)",
+            "max_amps": "Maximale stroom (A)",
+            "fixed_amps": "Ampère-getalentiteit",
+            "fixed_amps_hysteresis_seconds": "Vasthoudtijd ampère (seconden)",
+            "power_sensor": "Vermogenssensor",
+            "partial_min_excess": "Minimaal overschot bij gedeeltelijk zon (W)",
+            "connected_sensor": "Verbonden-sensor",
+            "hysteresis_on_off_seconds": "Aan/uit-hysteresis (seconden)",
+            "averaging_window_seconds": "Middelingsvenster (seconden)",
+            "min_soc_override": "Minimale SoC-overschrijving (%)",
+            "ignore_battery_protection": "Batterijbeveiliging negeren",
+            "soc_hysteresis_percent": "SoC-hysteresis (%)",
+            "is_battery": "Dit apparaat is een batterij",
+            "battery_soc_sensor": "Batterij-laadtoestandsensor (SoC)",
+            "min_soc": "Minimale batterij-SoC (%)",
+            "battery_protection_mode": "Batterijbeveiligingsmodus"
+          },
+          "data_description": {
+            "priority": "Lagere nummers draaien eerst wanneer het overschot beperkt is.",
+            "min_amps": "Minimale stroom die het apparaat nodig heeft om te draaien.",
+            "max_amps": "Maximale stroom die het apparaat mag trekken.",
+            "fixed_amps": "Optionele getalentiteit die de optimalisator tussen min en max instelt op basis van het beschikbare overschot.",
+            "fixed_amps_hysteresis_seconds": "Minimale tijd dat het ampère-setpunt wordt vastgehouden voordat het opnieuw mag wijzigen.",
+            "power_sensor": "Optionele sensor met het werkelijke vermogen van het apparaat (W); gebruikt voor de budgettering in plaats van een schatting.",
+            "partial_min_excess": "Minimaal gemiddeld overschot om te draaien in de modus partial_solar.",
+            "connected_sensor": "Optionele binaire sensor; het apparaat wordt overgeslagen zolang die uit is.",
+            "hysteresis_on_off_seconds": "Minimale tijd dat een aan/uit-toestand wordt vastgehouden voordat die mag wijzigen, om snel schakelen te voorkomen.",
+            "averaging_window_seconds": "Venster waarover het overschotvermogen wordt gemiddeld.",
+            "min_soc_override": "Minimale batterij-SoC per apparaat, die de waarde van de batterij overschrijft.",
+            "soc_hysteresis_percent": "Extra SoC boven het minimum die nodig is om na een blokkering opnieuw in te schakelen.",
+            "is_battery": "Indien ingeschakeld wordt dit apparaat als batterij behandeld: het levert de SoC-sensor en de onderstaande drempel die de andere apparaten beschermen, en wordt zelf nooit geblokkeerd door SoC-bescherming.",
+            "battery_soc_sensor": "Laadtoestandsensor (%) voor deze batterij; gebruikt om de andere apparaten te reguleren.",
+            "min_soc": "Andere apparaten worden geblokkeerd zolang de SoC van deze batterij onder deze waarde ligt.",
+            "battery_protection_mode": "Strikt schakelt de andere apparaten meteen uit wanneer de batterij onder de drempel zakt; soepel houdt ze inzetbaar maar alleen zolang zonne-overschot ze dekt (ze wachten op zon in plaats van de batterij te ontladen)."
+          }
+        },
+        "remove": {
+          "title": "Apparaat verwijderen",
+          "description": "{name} verwijderen?"
+        }
+      },
+      "abort": {
+        "reconfigure_successful": "Apparaat bijgewerkt.",
+        "reconfigure_not_supported": "Herconfiguratie wordt niet ondersteund.",
+        "subentry_removed": "Apparaat verwijderd.",
+        "remove_failed": "Kon het apparaat niet verwijderen."
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "Status"
+      },
+      "managed_consumption": {
+        "name": "Beheerd verbruik"
+      },
+      "spare_amps": {
+        "name": "Beschikbare stroom"
+      },
+      "quarterly_demand_estimate": {
+        "name": "Geschat kwartiervermogen"
+      },
+      "quarterly_demand_month_max": {
+        "name": "Maandmaximum kwartiervermogen"
+      },
+      "quarterly_demand_high_limit": {
+        "name": "Hoge limiet kwartiervermogen"
+      },
+      "quarterly_demand_critical_limit": {
+        "name": "Kritieke limiet kwartiervermogen"
+      },
+      "max_power_to_peak_limit": {
+        "name": "Max vermogen tot pieklimiet"
+      }
+    },
+    "binary_sensor": {
+      "quarterly_demand_high": {
+        "name": "Kwartiervermogen hoog"
+      },
+      "quarterly_demand_critical": {
+        "name": "Kwartiervermogen kritiek"
+      }
+    },
+    "switch": {
+      "auto_switching": {
+        "name": "Automatisch schakelen"
+      }
+    },
+    "select": {
+      "appliance_mode": {
+        "state": {
+          "forced": "Geforceerd",
+          "partial_solar": "Gedeeltelijk zon",
+          "full_solar": "Volledig zon",
+          "off_peak": "Daltarief"
+        }
+      }
+    }
+  },
+  "selector": {
+    "battery_protection_mode": {
+      "options": {
+        "strict": "Strikt",
+        "relaxed": "Soepel"
+      }
+    }
+  }
+}

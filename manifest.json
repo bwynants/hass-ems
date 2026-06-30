@@ -1,10 +1,10 @@
 {
-  "domain": "solar_appliance_manager",
-  "name": "Solar Appliance Manager",
-  "codeowners": ["@yourusername"],
+  "domain": "energy_management_system",
+  "name": "Energy Management System",
+  "codeowners": ["@bwynants"],
   "config_flow": true,
-  "documentation": "https://github.com/yourname/solar-appliance-manager",
+  "documentation": "https://github.com/bwynants/energy-management-system",
   "iot_class": "local_polling",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "homeassistant": "2024.6.0"
 }
