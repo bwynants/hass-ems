@@ -88,6 +88,98 @@ SENSOR_ONLY_SELECTOR = EntitySelector(
     EntitySelectorConfig(domain="sensor")
 )
 
+
+# ---------------------------------------------------------------------------
+# Schema-marker builders
+#
+# Each field behaves differently between the create form (``current is None``)
+# and the edit/reconfigure form (``current`` is the existing data). These three
+# helpers capture the three prefill styles used across the flows so the create
+# and edit schemas can share one definition each.
+# ---------------------------------------------------------------------------
+def _prefill_marker(key, current, required=False, edit_default=None):
+    """Bare on create; ``default=current[key]`` on edit.
+
+    Used for name/entity fields that historically prefilled with ``default=``.
+    ``edit_default`` is the fallback when the key is absent on edit.
+    """
+    cls = vol.Required if required else vol.Optional
+    if current is None:
+        return cls(key)
+    if edit_default is not None:
+        return cls(key, default=current.get(key, edit_default))
+    return cls(key, default=current.get(key))
+
+
+def _suggest_marker(key, current, required=False):
+    """Bare on create; ``suggested_value=current[key]`` on edit.
+
+    Used for optional entity selectors and optional numerics that must stay
+    clearable (suggested_value doesn't force a value back in).
+    """
+    cls = vol.Required if required else vol.Optional
+    if current is None:
+        return cls(key)
+    return cls(key, description={"suggested_value": current.get(key)})
+
+
+def _default_marker(key, current, default, required=False):
+    """``default=default`` on create; ``default=current.get(key, default)`` on edit.
+
+    Used for numerics/booleans/selects that always carry a concrete default.
+    """
+    cls = vol.Required if required else vol.Optional
+    if current is None:
+        return cls(key, default=default)
+    return cls(key, default=current.get(key, default))
+
+
+def _global_schema(current: dict | None) -> vol.Schema:
+    """Schema for the global setup (create: current=None) / options (edit) forms."""
+    return vol.Schema({
+        _prefill_marker(CONF_GRID_EXPORT, current): SENSOR_ENTITY_SELECTOR,
+        _prefill_marker(CONF_SOLAR_PRODUCTION, current, required=True): SENSOR_ENTITY_SELECTOR,
+        _prefill_marker(CONF_HOUSE_LOAD, current): SENSOR_ENTITY_SELECTOR,
+        _suggest_marker(CONF_DEMAND_POWER_CURRENT_PEAK_SENSOR, current): SENSOR_ONLY_SELECTOR,
+        _suggest_marker(CONF_DEMAND_POWER_CONSUMED_SENSOR, current): SENSOR_ONLY_SELECTOR,
+        _suggest_marker(CONF_DEMAND_MONTH_MAX_SENSOR, current): SENSOR_ONLY_SELECTOR,
+        _suggest_marker(CONF_PEAK_TARIFF_SENSOR, current): BINARY_SENSOR_ENTITY_SELECTOR,
+        _suggest_marker(CONF_VOLTAGE, current): NUMBER_ENTITY_SELECTOR,
+        _default_marker(CONF_MINIMAL_PEAK_WARNING, current, DEFAULT_MINIMAL_PEAK_WARNING): vol.All(vol.Coerce(float), vol.Range(min=0)),
+        _default_marker(CONF_PEAK_HIGH_SAFETY, current, DEFAULT_PEAK_HIGH_SAFETY): vol.All(vol.Coerce(float), vol.Range(min=0)),
+        _default_marker(CONF_PEAK_CRITICAL_SAFETY, current, DEFAULT_PEAK_CRITICAL_SAFETY): vol.All(vol.Coerce(float), vol.Range(min=0)),
+    })
+
+
+def _appliance_schema(current: dict | None) -> vol.Schema:
+    """Schema for the appliance subentry create (current=None) / reconfigure forms."""
+    return vol.Schema({
+        _prefill_marker(CONF_NAME, current, required=True, edit_default="Appliance"): str,
+        _prefill_marker(CONF_ENTITY_ID, current, required=True): SWITCH_ENTITY_SELECTOR,
+        _default_marker(CONF_PRIORITY, current, DEFAULT_PRIORITY, required=True): vol.All(int, vol.Range(0, 100)),
+        _default_marker(CONF_MIN_AMPS, current, DEFAULT_MIN_AMPS, required=True): vol.All(int, vol.Range(2, 20)),
+        _default_marker(CONF_MAX_AMPS, current, DEFAULT_MAX_AMPS, required=True): vol.All(int, vol.Range(2, 20)),
+        _suggest_marker(CONF_FIXED_AMPS, current): NUMBER_ENTITY_SELECTOR,
+        _default_marker(CONF_FIXED_AMPS_HYSTERESIS_SECONDS, current, DEFAULT_FIXED_AMPS_HYSTERESIS_SECONDS): vol.All(int, vol.Range(min=0)),
+        _suggest_marker(CONF_POWER_SENSOR, current): SENSOR_ENTITY_SELECTOR,
+        _suggest_marker(CONF_PARTIAL_MIN_EXCESS, current): vol.All(int, vol.Range(0, 5000)),
+        _suggest_marker(CONF_CONNECTED_SENSOR, current): BINARY_SENSOR_ENTITY_SELECTOR,
+        # Hysteresis
+        _default_marker(CONF_HYSTERESIS_ON_OFF_SECONDS, current, DEFAULT_HYSTERESIS): vol.All(int, vol.Range(min=0)),
+        _default_marker(CONF_AVERAGING_WINDOW, current, DEFAULT_AVERAGING): vol.All(int, vol.Range(min=30)),
+        # SoC
+        _suggest_marker(CONF_MIN_SOC_OVERRIDE, current): vol.All(int, vol.Range(0, 100)),
+        _default_marker(CONF_IGNORE_BATTERY_PROTECTION, current, DEFAULT_IGNORE_PROTECTION): bool,
+        _suggest_marker(CONF_SOC_HYSTERESIS_PERCENT, current): vol.All(int, vol.Range(0, 20)),
+        # Battery: when enabled, this appliance provides the SoC sensor and
+        # protection threshold used to gate the other appliances.
+        _default_marker(CONF_IS_BATTERY, current, DEFAULT_IS_BATTERY): bool,
+        _suggest_marker(CONF_BATTERY_SOC_SENSOR, current): SENSOR_ENTITY_SELECTOR,
+        _default_marker(CONF_MIN_SOC, current, DEFAULT_MIN_SOC): vol.All(int, vol.Range(0, 100)),
+        _default_marker(CONF_BATTERY_PROTECTION_MODE, current, DEFAULT_BATTERY_MODE): vol.In(BATTERY_PROTECTION_MODES),
+    })
+
+
 class SolarApplianceConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Energy Management System."""
 
@@ -114,22 +206,8 @@ class SolarApplianceConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     data=self._data,
                 )
 
-        data_schema = vol.Schema({
-            vol.Optional(CONF_GRID_EXPORT): SENSOR_ENTITY_SELECTOR,
-            vol.Required(CONF_SOLAR_PRODUCTION): SENSOR_ENTITY_SELECTOR,
-            vol.Optional(CONF_HOUSE_LOAD): SENSOR_ENTITY_SELECTOR,
-            vol.Optional(CONF_DEMAND_POWER_CURRENT_PEAK_SENSOR): SENSOR_ONLY_SELECTOR,
-            vol.Optional(CONF_DEMAND_POWER_CONSUMED_SENSOR): SENSOR_ONLY_SELECTOR,
-            vol.Optional(CONF_DEMAND_MONTH_MAX_SENSOR): SENSOR_ONLY_SELECTOR,
-            vol.Optional(CONF_PEAK_TARIFF_SENSOR): BINARY_SENSOR_ENTITY_SELECTOR,
-            vol.Optional(CONF_VOLTAGE): NUMBER_ENTITY_SELECTOR,
-            vol.Optional(CONF_MINIMAL_PEAK_WARNING, default=DEFAULT_MINIMAL_PEAK_WARNING): vol.All(vol.Coerce(float), vol.Range(min=0)),
-            vol.Optional(CONF_PEAK_HIGH_SAFETY, default=DEFAULT_PEAK_HIGH_SAFETY): vol.All(vol.Coerce(float), vol.Range(min=0)),
-            vol.Optional(CONF_PEAK_CRITICAL_SAFETY, default=DEFAULT_PEAK_CRITICAL_SAFETY): vol.All(vol.Coerce(float), vol.Range(min=0)),
-        })
-
         return self.async_show_form(
-            step_id="user", data_schema=data_schema, errors=errors
+            step_id="user", data_schema=_global_schema(None), errors=errors
         )
 
 
@@ -177,59 +255,9 @@ class SolarApplianceOptionsFlow(OptionsFlow):
                 )
                 return self.async_create_entry(data={})
 
-        # Build schema with current values as defaults
-        d = self.data
-
-        data_schema = vol.Schema({
-            vol.Optional(
-                CONF_GRID_EXPORT,
-                default=d.get(CONF_GRID_EXPORT)
-            ): SENSOR_ENTITY_SELECTOR,
-            vol.Required(
-                CONF_SOLAR_PRODUCTION, 
-                default=d.get(CONF_SOLAR_PRODUCTION)
-            ): SENSOR_ENTITY_SELECTOR,
-            vol.Optional(
-                CONF_HOUSE_LOAD, 
-                default=d.get(CONF_HOUSE_LOAD)
-            ): SENSOR_ENTITY_SELECTOR,
-            vol.Optional(
-                CONF_DEMAND_POWER_CURRENT_PEAK_SENSOR,
-                description={"suggested_value": d.get(CONF_DEMAND_POWER_CURRENT_PEAK_SENSOR)}
-            ): SENSOR_ONLY_SELECTOR,
-            vol.Optional(
-                CONF_DEMAND_POWER_CONSUMED_SENSOR,
-                description={"suggested_value": d.get(CONF_DEMAND_POWER_CONSUMED_SENSOR)}
-            ): SENSOR_ONLY_SELECTOR,
-            vol.Optional(
-                CONF_DEMAND_MONTH_MAX_SENSOR,
-                description={"suggested_value": d.get(CONF_DEMAND_MONTH_MAX_SENSOR)}
-            ): SENSOR_ONLY_SELECTOR,
-            vol.Optional(
-                CONF_PEAK_TARIFF_SENSOR,
-                description={"suggested_value": d.get(CONF_PEAK_TARIFF_SENSOR)}
-            ): BINARY_SENSOR_ENTITY_SELECTOR,
-            vol.Optional(
-                CONF_VOLTAGE,
-                description={"suggested_value":d.get(CONF_VOLTAGE)}
-            ): NUMBER_ENTITY_SELECTOR,
-            vol.Optional(
-                CONF_MINIMAL_PEAK_WARNING,
-                default=d.get(CONF_MINIMAL_PEAK_WARNING, DEFAULT_MINIMAL_PEAK_WARNING)
-            ): vol.All(vol.Coerce(float), vol.Range(min=0)),
-            vol.Optional(
-                CONF_PEAK_HIGH_SAFETY,
-                default=d.get(CONF_PEAK_HIGH_SAFETY, DEFAULT_PEAK_HIGH_SAFETY)
-            ): vol.All(vol.Coerce(float), vol.Range(min=0)),
-            vol.Optional(
-                CONF_PEAK_CRITICAL_SAFETY,
-                default=d.get(CONF_PEAK_CRITICAL_SAFETY, DEFAULT_PEAK_CRITICAL_SAFETY)
-            ): vol.All(vol.Coerce(float), vol.Range(min=0)),
-        })
-
         return self.async_show_form(
             step_id="user",
-            data_schema=data_schema,
+            data_schema=_global_schema(self.data),
             errors=errors
         )
 
@@ -261,33 +289,9 @@ class OptionsFlowHandler(ConfigSubentryFlow):
                     data=self._data,
                 )
 
-        schema = vol.Schema({
-            vol.Required(CONF_NAME): str,
-            vol.Required(CONF_ENTITY_ID): SWITCH_ENTITY_SELECTOR,
-            vol.Required(CONF_PRIORITY, default=DEFAULT_PRIORITY): vol.All(int, vol.Range(0, 100)),
-            vol.Required(CONF_MIN_AMPS, default=DEFAULT_MIN_AMPS): vol.All(int, vol.Range(2, 20)),
-            vol.Required(CONF_MAX_AMPS, default=DEFAULT_MAX_AMPS): vol.All(int, vol.Range(2, 20)),
-            vol.Optional(CONF_FIXED_AMPS): NUMBER_ENTITY_SELECTOR,
-            vol.Optional(CONF_FIXED_AMPS_HYSTERESIS_SECONDS, default=DEFAULT_FIXED_AMPS_HYSTERESIS_SECONDS): vol.All(int, vol.Range(min=0)),
-            vol.Optional(CONF_POWER_SENSOR): SENSOR_ENTITY_SELECTOR,
-            vol.Optional(CONF_PARTIAL_MIN_EXCESS): vol.All(int, vol.Range(0, 5000)),
-            vol.Optional(CONF_CONNECTED_SENSOR): BINARY_SENSOR_ENTITY_SELECTOR,
-            # Hysteresis
-            vol.Optional(CONF_HYSTERESIS_ON_OFF_SECONDS, default=DEFAULT_HYSTERESIS): vol.All(int, vol.Range(min=0)),
-            vol.Optional(CONF_AVERAGING_WINDOW, default=DEFAULT_AVERAGING): vol.All(int, vol.Range(min=30)),
-            # SoC
-            vol.Optional(CONF_MIN_SOC_OVERRIDE): vol.All(int, vol.Range(0, 100)),
-            vol.Optional(CONF_IGNORE_BATTERY_PROTECTION, default=DEFAULT_IGNORE_PROTECTION): bool,
-            vol.Optional(CONF_SOC_HYSTERESIS_PERCENT): vol.All(int, vol.Range(0, 20)),
-            # Battery: when enabled, this appliance provides the SoC sensor and
-            # protection threshold used to gate the other appliances.
-            vol.Optional(CONF_IS_BATTERY, default=DEFAULT_IS_BATTERY): bool,
-            vol.Optional(CONF_BATTERY_SOC_SENSOR): SENSOR_ENTITY_SELECTOR,
-            vol.Optional(CONF_MIN_SOC, default=DEFAULT_MIN_SOC): vol.All(int, vol.Range(0, 100)),
-            vol.Optional(CONF_BATTERY_PROTECTION_MODE, default=DEFAULT_BATTERY_MODE): vol.In(BATTERY_PROTECTION_MODES),
-        })
-
-        return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
+        return self.async_show_form(
+            step_id="user", data_schema=_appliance_schema(None), errors=errors
+        )
 
     # ---------------------- Reconfigure existing ----------------------
     async def async_step_reconfigure(
@@ -350,33 +354,10 @@ class OptionsFlowHandler(ConfigSubentryFlow):
 
             return self.async_abort(reason="reconfigure_not_supported")
 
-        # Show form
-        d = self._data
-        schema = vol.Schema({
-            vol.Required(CONF_NAME, default=d.get(CONF_NAME, "Appliance")): str,
-            vol.Required(CONF_ENTITY_ID, default=d.get(CONF_ENTITY_ID)): SWITCH_ENTITY_SELECTOR,
-            vol.Required(CONF_PRIORITY, default=d.get(CONF_PRIORITY, DEFAULT_PRIORITY)): vol.All(int, vol.Range(0, 100)),
-            vol.Required(CONF_MIN_AMPS, default=d.get(CONF_MIN_AMPS, DEFAULT_MIN_AMPS)): vol.All(int, vol.Range(2, 20)),
-            vol.Required(CONF_MAX_AMPS, default=d.get(CONF_MAX_AMPS, DEFAULT_MAX_AMPS)): vol.All(int, vol.Range(2, 20)),
-            vol.Optional(CONF_FIXED_AMPS, description={"suggested_value": d.get(CONF_FIXED_AMPS)}): NUMBER_ENTITY_SELECTOR,
-            vol.Optional(CONF_FIXED_AMPS_HYSTERESIS_SECONDS, default=d.get(CONF_FIXED_AMPS_HYSTERESIS_SECONDS, DEFAULT_FIXED_AMPS_HYSTERESIS_SECONDS)): vol.All(int, vol.Range(min=0)),
-            vol.Optional(CONF_POWER_SENSOR, description={"suggested_value": d.get(CONF_POWER_SENSOR)}): SENSOR_ENTITY_SELECTOR,
-            vol.Optional(CONF_PARTIAL_MIN_EXCESS, description={"suggested_value": d.get(CONF_PARTIAL_MIN_EXCESS)}): vol.All(int, vol.Range(0, 5000)),
-            vol.Optional(CONF_CONNECTED_SENSOR, description={"suggested_value": d.get(CONF_CONNECTED_SENSOR)}): BINARY_SENSOR_ENTITY_SELECTOR,
-            vol.Optional(CONF_HYSTERESIS_ON_OFF_SECONDS, default=d.get(CONF_HYSTERESIS_ON_OFF_SECONDS, DEFAULT_HYSTERESIS)): vol.All(int, vol.Range(min=0)),
-            vol.Optional(CONF_AVERAGING_WINDOW, default=d.get(CONF_AVERAGING_WINDOW, DEFAULT_AVERAGING)): vol.All(int, vol.Range(min=30)),
-            vol.Optional(CONF_MIN_SOC_OVERRIDE, description={"suggested_value": d.get(CONF_MIN_SOC_OVERRIDE)}): vol.All(int, vol.Range(0, 100)),
-            vol.Optional(CONF_IGNORE_BATTERY_PROTECTION, default=d.get(CONF_IGNORE_BATTERY_PROTECTION, DEFAULT_IGNORE_PROTECTION)): bool,
-            vol.Optional(CONF_SOC_HYSTERESIS_PERCENT, description={"suggested_value": d.get(CONF_SOC_HYSTERESIS_PERCENT)}): vol.All(int, vol.Range(0, 20)),
-            # Battery
-            vol.Optional(CONF_IS_BATTERY, default=d.get(CONF_IS_BATTERY, DEFAULT_IS_BATTERY)): bool,
-            vol.Optional(CONF_BATTERY_SOC_SENSOR, description={"suggested_value": d.get(CONF_BATTERY_SOC_SENSOR)}): SENSOR_ENTITY_SELECTOR,
-            vol.Optional(CONF_MIN_SOC, default=d.get(CONF_MIN_SOC, DEFAULT_MIN_SOC)): vol.All(int, vol.Range(0, 100)),
-            vol.Optional(CONF_BATTERY_PROTECTION_MODE, default=d.get(CONF_BATTERY_PROTECTION_MODE, DEFAULT_BATTERY_MODE)): vol.In(BATTERY_PROTECTION_MODES),
-        })
-
         return self.async_show_form(
-            step_id="reconfigure_basic", data_schema=schema, errors=errors
+            step_id="reconfigure_basic",
+            data_schema=_appliance_schema(self._data),
+            errors=errors,
         )
 
     # ---------------------- Remove appliance ----------------------

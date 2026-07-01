@@ -7,7 +7,7 @@ A Home Assistant custom integration (**EMS**) that automatically manages househo
 ## Features
 
 - **Priority-based scheduling** — appliances run in priority order when solar surplus is available.
-- **Per-appliance runtime modes** — `partial_solar`, `forced`, or `off_peak`, selectable from the HA UI and persisted across restarts.
+- **Per-appliance runtime modes** — `partial_solar`, `forced`, `full_solar`, `off_peak`, or `unmanaged`, selectable from the HA UI and persisted across restarts.
 - **Hysteresis & debounce** — configurable on/off delay and minimum switch interval prevent rapid cycling.
 - **Averaging window** — excess power is averaged over a rolling window to smooth out transient spikes.
 - **Battery SoC protection** — appliances are blocked when battery drops below a configurable minimum, with hysteresis to avoid flapping.
@@ -106,6 +106,7 @@ Each appliance gets a **Select** entity to change its mode from the HA UI. Modes
 | `full_solar` | Solar-only — runs **only** when the remaining solar excess fully covers the appliance (`remaining ≥ min_amps`); never imports from the grid. No partial-coverage or off-peak fallback |
 | `forced` | Runs whenever it can reach `min_amps`. Solar surplus and grid peak-headroom are **additive** — solar is used *on top of* grid power, scaling the setpoint up to `max_amps` (the grid-imported part stays bounded by the High/peak limit) |
 | `off_peak` | Runs freely during off-peak hours; during peak hours uses a breakeven calculation against export/peak tariff rates |
+| `unmanaged` | EMS ignores the appliance entirely — it neither switches it on/off nor adjusts its amps, and its draw is treated as base load. Use this instead of a separate enable/disable switch |
 
 ---
 
@@ -115,8 +116,7 @@ For each configured appliance EMS creates:
 
 | Entity | Type | Description |
 |---|---|---|
-| `switch.<name>` | Switch | Reflects active state; manual calls pass through to the underlying switch |
-| `select.<name>_mode` | Select | Runtime mode selector (`partial_solar` / `forced` / `off_peak`) |
+| `select.<name>_mode` | Select | Runtime mode selector (`partial_solar` / `forced` / `full_solar` / `off_peak` / `unmanaged`) |
 
 A single EMS-wide status sensor is also created:
 

@@ -9,13 +9,19 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.const import UnitOfPower, UnitOfElectricCurrent
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.helpers.entity import DeviceInfo
-from .const import DOMAIN, MANUFACTURER
+from .const import DOMAIN
+from .entity import EMSEntity
 from .coordinator import SolarApplianceCoordinator
 from .demand_coordinator import QuarterlyDemandCoordinator
 
 _LOGGER = logging.getLogger(__name__)
+
+# (data key, unique-id suffix, translation key, icon) for the amps value sensors
+# read from the main coordinator. Both are CURRENT/AMPERE measurements.
+_MAIN_SENSORS: list[tuple[str, str, str, str]] = [
+    ("managed_amps", "managed_consumption", "managed_consumption", "mdi:power-plug"),
+    ("excess_amps", "spare_amps", "spare_amps", "mdi:flash"),
+]
 
 # (data key, translation key, extra attributes {attr_name: data_key}) for the
 # quarterly-demand power sensors.
@@ -30,11 +36,11 @@ _DEMAND_SENSORS: list[tuple[str, str, dict[str, str] | None]] = [
 
 async def async_setup_entry(hass, entry, async_add_entities):
     coordinator: SolarApplianceCoordinator = hass.data[DOMAIN][entry.entry_id]
-    entities: list[SensorEntity] = [
-        SolarApplianceStatusSensor(coordinator, entry.entry_id),
-        ManagedConsumptionSensor(coordinator, entry.entry_id),
-        SpareAmpsSensor(coordinator, entry.entry_id),
-    ]
+    entities: list[SensorEntity] = [SolarApplianceStatusSensor(coordinator, entry.entry_id)]
+    entities.extend(
+        MainAmpsSensor(coordinator, entry.entry_id, key, uid_suffix, translation_key, icon)
+        for key, uid_suffix, translation_key, icon in _MAIN_SENSORS
+    )
     demand: QuarterlyDemandCoordinator = coordinator.demand_coordinator
     entities.extend(
         QuarterlyDemandSensor(demand, entry.entry_id, key, translation_key, extra_attrs)
@@ -43,10 +49,9 @@ async def async_setup_entry(hass, entry, async_add_entities):
     async_add_entities(entities)
 
 
-class SolarApplianceStatusSensor(CoordinatorEntity, SensorEntity):
+class SolarApplianceStatusSensor(EMSEntity, SensorEntity):
     """Main status sensor."""
 
-    _attr_has_entity_name = True
     _attr_translation_key = "status"
     _attr_native_unit_of_measurement = None
     _attr_icon = "mdi:solar-power"
@@ -54,15 +59,6 @@ class SolarApplianceStatusSensor(CoordinatorEntity, SensorEntity):
     def __init__(self, coordinator: SolarApplianceCoordinator, entry_id: str):
         super().__init__(coordinator)
         self._attr_unique_id = f"{DOMAIN}_{entry_id}_status"
-
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.coordinator.config_entry.entry_id)},
-            name="EMS",
-            manufacturer=MANUFACTURER,
-        )
 
     def _persist(self, key: str, value) -> None:
         """Persist state to config_entry.data so it survives restarts."""
@@ -95,72 +91,42 @@ class SolarApplianceStatusSensor(CoordinatorEntity, SensorEntity):
         }
 
 
-class ManagedConsumptionSensor(CoordinatorEntity, SensorEntity):
-    """Amps the managed appliances are currently drawing."""
+class MainAmpsSensor(EMSEntity, SensorEntity):
+    """A single amps value read from the main coordinator's data.
 
-    _attr_has_entity_name = True
-    _attr_translation_key = "managed_consumption"
-    _attr_device_class = SensorDeviceClass.CURRENT
-    _attr_native_unit_of_measurement = UnitOfElectricCurrent.AMPERE
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_icon = "mdi:power-plug"
-
-    def __init__(self, coordinator: SolarApplianceCoordinator, entry_id: str):
-        super().__init__(coordinator)
-        self._attr_unique_id = f"{DOMAIN}_{entry_id}_managed_consumption"
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.coordinator.config_entry.entry_id)},
-            name="EMS",
-            manufacturer=MANUFACTURER,
-        )
-
-    @property
-    def native_value(self):
-        if not self.coordinator.data:
-            return None
-        return self.coordinator.data.get("managed_amps")
-
-
-class SpareAmpsSensor(CoordinatorEntity, SensorEntity):
-    """Total surplus amps available, including what the managed appliances draw.
-
-    This is the gross budget (grid surplus + managed appliances' add-back) the
-    optimizer allocates from — i.e. the amps available to spend.
+    Covers "Managed Consumption" (amps the managed appliances draw) and
+    "Spare Amps" (gross surplus budget the optimizer allocates from).
     """
 
-    _attr_has_entity_name = True
-    _attr_translation_key = "spare_amps"
     _attr_device_class = SensorDeviceClass.CURRENT
     _attr_native_unit_of_measurement = UnitOfElectricCurrent.AMPERE
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_icon = "mdi:flash"
 
-    def __init__(self, coordinator: SolarApplianceCoordinator, entry_id: str):
+    def __init__(
+        self,
+        coordinator: SolarApplianceCoordinator,
+        entry_id: str,
+        key: str,
+        uid_suffix: str,
+        translation_key: str,
+        icon: str,
+    ) -> None:
         super().__init__(coordinator)
-        self._attr_unique_id = f"{DOMAIN}_{entry_id}_spare_amps"
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.coordinator.config_entry.entry_id)},
-            name="EMS",
-            manufacturer=MANUFACTURER,
-        )
+        self._key = key
+        self._attr_translation_key = translation_key
+        self._attr_icon = icon
+        self._attr_unique_id = f"{DOMAIN}_{entry_id}_{uid_suffix}"
 
     @property
     def native_value(self):
         if not self.coordinator.data:
             return None
-        return self.coordinator.data.get("excess_amps")
+        return self.coordinator.data.get(self._key)
 
 
-class QuarterlyDemandSensor(CoordinatorEntity, SensorEntity):
+class QuarterlyDemandSensor(EMSEntity, SensorEntity):
     """A single quarter-hour demand power value (kW)."""
 
-    _attr_has_entity_name = True
     _attr_device_class = SensorDeviceClass.POWER
     _attr_native_unit_of_measurement = UnitOfPower.KILO_WATT
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -178,14 +144,6 @@ class QuarterlyDemandSensor(CoordinatorEntity, SensorEntity):
         self._extra_attrs = extra_attrs or {}
         self._attr_translation_key = translation_key
         self._attr_unique_id = f"{DOMAIN}_{entry_id}_{key}"
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.coordinator.config_entry.entry_id)},
-            name="EMS",
-            manufacturer=MANUFACTURER,
-        )
 
     @property
     def available(self) -> bool:

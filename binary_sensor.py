@@ -7,9 +7,8 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
     BinarySensorDeviceClass,
 )
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.helpers.entity import DeviceInfo
-from .const import DOMAIN, MANUFACTURER
+from .const import DOMAIN
+from .entity import EMSEntity
 from .coordinator import SolarApplianceCoordinator
 from .demand_coordinator import QuarterlyDemandCoordinator
 
@@ -31,10 +30,9 @@ async def async_setup_entry(hass, entry, async_add_entities):
     )
 
 
-class QuarterlyDemandBinarySensor(CoordinatorEntity, BinarySensorEntity):
+class QuarterlyDemandBinarySensor(EMSEntity, BinarySensorEntity):
     """A quarter-hour demand warning flag (High / Critical)."""
 
-    _attr_has_entity_name = True
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
 
     def __init__(
@@ -48,14 +46,6 @@ class QuarterlyDemandBinarySensor(CoordinatorEntity, BinarySensorEntity):
         self._key = key
         self._attr_translation_key = translation_key
         self._attr_unique_id = f"{DOMAIN}_{entry_id}_{key}"
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.coordinator.config_entry.entry_id)},
-            name="EMS",
-            manufacturer=MANUFACTURER,
-        )
 
     @property
     def available(self) -> bool:

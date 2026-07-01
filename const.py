@@ -44,7 +44,6 @@ CONF_MINIMAL_PEAK_WARNING = "minimal_peak_warning"
 CONF_PEAK_HIGH_SAFETY = "peak_high_safety"
 CONF_PEAK_CRITICAL_SAFETY = "peak_critical_safety"
 
-CONF_APPLIANCES = "appliances"
 CONF_RUNTIME_MODES = "runtime_modes"
 CONF_RUNTIME_MODE = "runtime_mode"
 CONF_AUTO_SWITCHING = "auto_switching"
@@ -60,7 +59,6 @@ CONF_FIXED_AMPS_HYSTERESIS_SECONDS = "fixed_amps_hysteresis_seconds"
 CONF_POWER_SENSOR = "power_sensor"
 CONF_PARTIAL_MIN_EXCESS = "partial_min_excess"
 CONF_CONNECTED_SENSOR = "connected_sensor"
-CONF_ENABLED = "enabled"
 CONF_IS_BATTERY = "is_battery"
 
 # Hysteresis
@@ -72,15 +70,24 @@ CONF_MIN_SOC_OVERRIDE = "min_soc_override"
 CONF_IGNORE_BATTERY_PROTECTION = "ignore_battery_protection"
 CONF_SOC_HYSTERESIS_PERCENT = "soc_hysteresis_percent"
 
-# Modes
-MODES = ["forced", "partial_solar", "full_solar", "off_peak"]
-DEFAULT_MODE = "partial_solar"
+# Modes. "unmanaged" means EMS ignores the appliance entirely (it neither
+# switches it on/off nor adjusts it) — the replacement for the old per-appliance
+# enable switch.
+MODE_FORCED = "forced"
+MODE_PARTIAL_SOLAR = "partial_solar"
+MODE_FULL_SOLAR = "full_solar"
+MODE_OFF_PEAK = "off_peak"
+MODE_UNMANAGED = "unmanaged"
+MODES = [MODE_UNMANAGED, MODE_OFF_PEAK, MODE_PARTIAL_SOLAR, MODE_FULL_SOLAR, MODE_FORCED]
+DEFAULT_MODE = MODE_PARTIAL_SOLAR
 
 # Defaults
 DEFAULT_VOLTAGE = 230
 DEFAULT_MIN_SOC = 20
-DEFAULT_BATTERY_MODE = "strict"
-BATTERY_PROTECTION_MODES = ["strict", "relaxed"]
+BATTERY_MODE_STRICT = "strict"
+BATTERY_MODE_RELAXED = "relaxed"
+DEFAULT_BATTERY_MODE = BATTERY_MODE_STRICT
+BATTERY_PROTECTION_MODES = [BATTERY_MODE_STRICT, BATTERY_MODE_RELAXED]
 DEFAULT_HYSTERESIS = 120
 DEFAULT_MIN_AMPS = 6
 DEFAULT_PRIORITY = 100
@@ -96,6 +103,13 @@ DEFAULT_IS_BATTERY = False
 DEFAULT_MINIMAL_PEAK_WARNING = 4.0
 DEFAULT_PEAK_HIGH_SAFETY = 0.4
 DEFAULT_PEAK_CRITICAL_SAFETY = 0.2
+
+# Main coordinator cycle interval (s) and the fixed_amps setpoint deadband (A).
+# The fixed_amps setpoint is quantised to whole amps, rounded DOWN with this
+# margin: run at N amps only once N + margin is available (e.g. 6.8 -> 6, and it
+# steps up to 7 only at 7.5). The margin also acts as a deadband against flicker.
+CONTROLLER_UPDATE_INTERVAL = 10
+FIXED_AMPS_DEADBAND = 0.5
 
 # Quarterly demand constants (match peakpower.yaml).
 DEMAND_QUARTER_SECONDS = 900

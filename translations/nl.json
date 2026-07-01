@@ -221,7 +221,8 @@
           "forced": "Geforceerd",
           "partial_solar": "Gedeeltelijk zon",
           "full_solar": "Volledig zon",
-          "off_peak": "Daltarief"
+          "off_peak": "Daltarief",
+          "unmanaged": "Onbeheerd"
         }
       }
     }

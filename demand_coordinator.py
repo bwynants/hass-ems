@@ -16,13 +16,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
-from .coordinator import (
-    _normalise_power,
-    _UNAVAILABLE_STATES,
-    DEVICE_CLASS,
-    DEVICE_CLASS_POWER,
-    UNIT_OF_MEASUREMENT,
-)
+from .helpers import read_kw
 from .const import (
     DOMAIN,
     CONF_DEMAND_POWER_CURRENT_PEAK_SENSOR,
@@ -89,23 +83,8 @@ class QuarterlyDemandCoordinator(DataUpdateCoordinator):
         return bool(self.data and self.data.get("configured"))
 
     def _read_kw(self, entity_id: str | None) -> float | None:
-        """Read a sensor value in kW, or None if unavailable.
-
-        Power-class sources are unit-normalised to watts then divided by 1000;
-        non-power sources are assumed to already be in kW (thresholds are kW).
-        """
-        if not entity_id:
-            return None
-        state = self.hass.states.get(entity_id)
-        if state is None or state.state in _UNAVAILABLE_STATES:
-            return None
-        try:
-            val = float(state.state)
-        except (ValueError, TypeError):
-            return None
-        if state.attributes.get(DEVICE_CLASS) == DEVICE_CLASS_POWER:
-            val = _normalise_power(val, state.attributes.get(UNIT_OF_MEASUREMENT)) / 1000.0
-        return val
+        """Read a sensor value in kW, or None if unavailable."""
+        return read_kw(self.hass, entity_id)
 
     def _inactive(self) -> dict:
         """Return the data shape used when the feature is not configured."""

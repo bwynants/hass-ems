@@ -4,10 +4,9 @@ from __future__ import annotations
 import logging
 
 from homeassistant.components.select import SelectEntity
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.helpers.entity import DeviceInfo
-from .const import DOMAIN, MODES, DEFAULT_MODE, CONF_RUNTIME_MODE, CONF_RUNTIME_MODES, CONF_NAME, MANUFACTURER, get_appliances
+from .const import DOMAIN, MODES, DEFAULT_MODE, CONF_RUNTIME_MODE, CONF_RUNTIME_MODES, CONF_NAME, get_appliances
+from .entity import EMSEntity
 from .coordinator import SolarApplianceCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -21,11 +20,12 @@ async def async_setup_entry(hass, entry: ConfigEntry, async_add_entities):
     async_add_entities(entities)
 
 
-class SolarApplianceModeSelect(CoordinatorEntity, SelectEntity):
+class SolarApplianceModeSelect(EMSEntity, SelectEntity):
     """Persistent mode selector for each appliance."""
 
     # Shared translation key so the mode options are translatable; the entity
     # name stays per-appliance (user-provided), so has_entity_name is not used.
+    _attr_has_entity_name = False
     _attr_translation_key = "appliance_mode"
 
     def __init__(self, coordinator: SolarApplianceCoordinator, appliance):
@@ -37,14 +37,6 @@ class SolarApplianceModeSelect(CoordinatorEntity, SelectEntity):
         self._attr_unique_id = f"{DOMAIN}_{self._appliance_id}_mode" if self._appliance_id else f"{DOMAIN}_{appliance[CONF_NAME]}_mode"
         self._attr_options = MODES
         self._appliance_name = appliance[CONF_NAME]
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.coordinator.config_entry.entry_id)},
-            name="EMS",
-            manufacturer=MANUFACTURER,
-        )
 
     @property
     def current_option(self) -> str:

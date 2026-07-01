@@ -221,7 +221,8 @@
           "forced": "Forced",
           "partial_solar": "Partial solar",
           "full_solar": "Full solar",
-          "off_peak": "Off-peak"
+          "off_peak": "Off-peak",
+          "unmanaged": "Unmanaged"
         }
       }
     }
