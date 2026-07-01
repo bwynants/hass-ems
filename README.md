@@ -103,7 +103,7 @@ Each appliance gets a **Select** entity to change its mode from the HA UI. Modes
 | Mode | Behaviour |
 |---|---|
 | `partial_solar` | Runs only when averaged excess solar ≥ `partial_min_excess` W *(default)* |
-| `full_solar` | Solar-only — runs **only** when the remaining solar excess fully covers the appliance (`remaining ≥ min_amps`); never imports from the grid. No partial-coverage or off-peak fallback |
+| `full_solar` | Solar-only — runs **only** when both the current *and* the averaged solar excess fully cover the appliance (`remaining ≥ min_amps` **and** `avg_excess ≥ min_amps`); never imports from the grid, and a momentary spike won't commit it to a run it can't sustain. No partial-coverage or off-peak fallback |
 | `forced` | Runs whenever it can reach `min_amps`. Solar surplus and grid peak-headroom are **additive** — solar is used *on top of* grid power, scaling the setpoint up to `max_amps` (the grid-imported part stays bounded by the High/peak limit) |
 | `off_peak` | Runs freely during off-peak hours; during peak hours uses a breakeven calculation against export/peak tariff rates |
 | `unmanaged` | EMS ignores the appliance entirely — it neither switches it on/off nor adjusts its amps, and its draw is treated as base load. Use this instead of a separate enable/disable switch |
@@ -140,7 +140,7 @@ When the quarterly-demand sources are configured, these EMS-wide entities are al
 
 ## Update Interval
 
-The coordinator polls every **30 seconds**. Hysteresis and averaging windows are expressed in seconds and are sampled at this rate. The quarterly-demand entities refresh on a separate **~10 second** cycle.
+The coordinator polls every **10 seconds** (`CONTROLLER_UPDATE_INTERVAL`). Hysteresis and averaging windows are expressed in seconds and are sampled at this rate. The quarterly-demand entities refresh on a separate **~10 second** cycle.
 
 ---
 

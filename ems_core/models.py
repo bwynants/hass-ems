@@ -1,0 +1,126 @@
+"""Dataclasses for the EMS decision core — plain data, stdlib only.
+
+These are the boundary types between the HA shell and the pure core: the shell
+reads sensors/config into the ``*Input`` types, the core returns the ``*Result``
+types and ``SetFixedAmps`` commands, and the shell applies them.
+"""
+from __future__ import annotations
+
+from collections import deque
+from dataclasses import dataclass, field
+from datetime import datetime
+
+from .const import APPLIANCE_HISTORY_MAXLEN
+
+
+@dataclass
+class ApplianceInput:
+    """A fully-resolved snapshot of one appliance for a single control cycle.
+
+    All sensor reads and the persisted runtime mode are resolved by the shell up
+    front so the core never touches Home Assistant.
+    """
+    name: str
+    priority: int
+    min_amps: int
+    max_amps: int
+    mode: str
+    has_fixed_amps: bool
+    fixed_amps_value: float | None
+    fixed_amps_hold_seconds: int
+    partial_min_excess: float
+    hysteresis_seconds: int
+    averaging_window_seconds: int
+    connected: bool
+    entity_on: bool
+    measured_amps: float | None
+    is_battery: bool
+    ignore_battery_protection: bool
+    min_soc_override: float | None
+    soc_hysteresis_percent: float
+    # Battery-only fields (populated when is_battery is True).
+    battery_soc: float | None = None
+    battery_min_soc: float | None = None
+    battery_protection_mode: str | None = None
+
+
+@dataclass
+class ApplianceState:
+    """Mutable runtime state for one appliance, persisted between cycles."""
+    is_on: bool = False
+    last_change: datetime | None = None
+    last_fixed_amps: float | None = None
+    last_fixed_amps_change: datetime | None = None
+    excess_history: deque = field(
+        default_factory=lambda: deque(maxlen=APPLIANCE_HISTORY_MAXLEN)
+    )
+    soc_blocked: bool = False
+
+
+@dataclass
+class EnergyInput:
+    """Grid/solar snapshot and tariff context for a control cycle."""
+    grid_w: float | None
+    solar_w: float
+    house_load_w: float
+    voltage: float
+    off_peak: bool
+    cost_peak: float
+    cost_offpeak: float
+    gain_export: float
+
+
+@dataclass
+class BatteryStatus:
+    """Derived battery SoC-protection status (None fields ⇒ no battery)."""
+    soc: float | None = None
+    min_soc: float | None = None
+    protection_mode: str | None = None
+
+
+@dataclass
+class SetFixedAmps:
+    """Command: write ``value`` amps to the appliance's fixed_amps entity."""
+    name: str
+    value: float
+
+
+@dataclass
+class FixedAmpsDecision:
+    """Outcome of the fixed_amps stepping/gating logic.
+
+    ``effective`` is the amperage to use for budgeting; ``write_value`` is the
+    value to command (None ⇒ hold, don't write).
+    """
+    effective: float
+    write_value: float | None
+
+
+@dataclass
+class OptimizeResult:
+    """Result of a normal optimize cycle."""
+    active: list[str]
+    decided_amps: float
+    fixed_amps_commands: list[SetFixedAmps]
+
+
+@dataclass
+class ShedResult:
+    """Result of a critical-demand shed cycle."""
+    kept: list[str]
+    kept_amps: float
+    fixed_amps_commands: list[SetFixedAmps]
+
+
+@dataclass
+class DemandResult:
+    """Quarter-hour demand computation (all kW except the boolean flags)."""
+    estimate: float
+    month_max: float
+    high_limit: float
+    critical_limit: float
+    max_power_to_peak: float
+    high: bool
+    critical: bool
+    high_on: bool
+    critical_on: bool

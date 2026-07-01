@@ -1,4 +1,9 @@
-"""Constants for Energy Management System."""
+"""Constants for Energy Management System.
+
+Home-Assistant-facing constants (domain, platforms, config-entry keys) live
+here. The pure domain constants and numeric defaults live in
+:mod:`ems_core.const` and are re-exported below so existing imports keep working.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +11,9 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
+
+# Re-export the pure domain constants / defaults from the core library.
+from .ems_core.const import *  # noqa: F401,F403
 
 DOMAIN = "energy_management_system"
 MANUFACTURER = "Energy Management System"
@@ -69,52 +77,3 @@ CONF_AVERAGING_WINDOW = "averaging_window_seconds"
 CONF_MIN_SOC_OVERRIDE = "min_soc_override"
 CONF_IGNORE_BATTERY_PROTECTION = "ignore_battery_protection"
 CONF_SOC_HYSTERESIS_PERCENT = "soc_hysteresis_percent"
-
-# Modes. "unmanaged" means EMS ignores the appliance entirely (it neither
-# switches it on/off nor adjusts it) — the replacement for the old per-appliance
-# enable switch.
-MODE_FORCED = "forced"
-MODE_PARTIAL_SOLAR = "partial_solar"
-MODE_FULL_SOLAR = "full_solar"
-MODE_OFF_PEAK = "off_peak"
-MODE_UNMANAGED = "unmanaged"
-MODES = [MODE_UNMANAGED, MODE_OFF_PEAK, MODE_PARTIAL_SOLAR, MODE_FULL_SOLAR, MODE_FORCED]
-DEFAULT_MODE = MODE_PARTIAL_SOLAR
-
-# Defaults
-DEFAULT_VOLTAGE = 230
-DEFAULT_MIN_SOC = 20
-BATTERY_MODE_STRICT = "strict"
-BATTERY_MODE_RELAXED = "relaxed"
-DEFAULT_BATTERY_MODE = BATTERY_MODE_STRICT
-BATTERY_PROTECTION_MODES = [BATTERY_MODE_STRICT, BATTERY_MODE_RELAXED]
-DEFAULT_HYSTERESIS = 120
-DEFAULT_MIN_AMPS = 6
-DEFAULT_PRIORITY = 100
-DEFAULT_MAX_AMPS = 16
-DEFAULT_FIXED_AMPS_HYSTERESIS_SECONDS = 120
-DEFAULT_AVERAGING = 180
-DEFAULT_SOC_HYSTERESIS = 5
-DEFAULT_IGNORE_PROTECTION = False
-DEFAULT_AUTO_SWITCHING = True
-DEFAULT_IS_BATTERY = False
-
-# Quarterly demand defaults (kW). Thresholds entered as plain numbers in config.
-DEFAULT_MINIMAL_PEAK_WARNING = 4.0
-DEFAULT_PEAK_HIGH_SAFETY = 0.4
-DEFAULT_PEAK_CRITICAL_SAFETY = 0.2
-
-# Main coordinator cycle interval (s) and the fixed_amps setpoint deadband (A).
-# The fixed_amps setpoint is quantised to whole amps, rounded DOWN with this
-# margin: run at N amps only once N + margin is available (e.g. 6.8 -> 6, and it
-# steps up to 7 only at 7.5). The margin also acts as a deadband against flicker.
-CONTROLLER_UPDATE_INTERVAL = 10
-FIXED_AMPS_DEADBAND = 0.5
-
-# Quarterly demand constants (match peakpower.yaml).
-DEMAND_QUARTER_SECONDS = 900
-DEMAND_MAX_POWER_CAP_KW = 40.0
-DEMAND_HYSTERESIS_KW = 0.2
-DEMAND_HIGH_GATE_MINUTES = 6
-DEMAND_CRITICAL_GATE_MINUTES = 8
-DEMAND_UPDATE_INTERVAL_SECONDS = 10

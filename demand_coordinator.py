@@ -17,6 +17,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
 from .helpers import read_kw
+from .ems_core.demand import compute_demand
 from .const import (
     DOMAIN,
     CONF_DEMAND_POWER_CURRENT_PEAK_SENSOR,
@@ -28,11 +29,6 @@ from .const import (
     DEFAULT_MINIMAL_PEAK_WARNING,
     DEFAULT_PEAK_HIGH_SAFETY,
     DEFAULT_PEAK_CRITICAL_SAFETY,
-    DEMAND_QUARTER_SECONDS,
-    DEMAND_MAX_POWER_CAP_KW,
-    DEMAND_HYSTERESIS_KW,
-    DEMAND_HIGH_GATE_MINUTES,
-    DEMAND_CRITICAL_GATE_MINUTES,
     DEMAND_UPDATE_INTERVAL_SECONDS,
 )
 
@@ -116,7 +112,6 @@ class QuarterlyDemandCoordinator(DataUpdateCoordinator):
         now = dt_util.now()
         minute_in_quarter = now.minute % 15
         seconds_done = minute_in_quarter * 60 + now.second
-        seconds_remaining = max(DEMAND_QUARTER_SECONDS - seconds_done, 1)
 
         current_so_far = (self._read_kw(current_avg_id) or 0.0) if seconds_done > 0 else 0.0
         power_consumed = self._read_kw(power_consumed_id) or 0.0
@@ -126,34 +121,28 @@ class QuarterlyDemandCoordinator(DataUpdateCoordinator):
         high_safety = float(config.get(CONF_PEAK_HIGH_SAFETY, DEFAULT_PEAK_HIGH_SAFETY))
         crit_safety = float(config.get(CONF_PEAK_CRITICAL_SAFETY, DEFAULT_PEAK_CRITICAL_SAFETY))
 
-        month_max = max(month_max_src, minimal)
-        high_limit = max(month_max - high_safety, 0.0)
-        critical_limit = max(month_max - crit_safety, 0.0)
-
-        estimate = current_so_far + power_consumed * seconds_remaining / DEMAND_QUARTER_SECONDS
-
-        power_to_consume = max(
-            (high_limit - current_so_far) * DEMAND_QUARTER_SECONDS / seconds_remaining, 0.0
+        # Pure quarter-hour math lives in the core library.
+        r = compute_demand(
+            current_so_far=current_so_far,
+            power_consumed=power_consumed,
+            month_max_src=month_max_src,
+            minimal=minimal,
+            high_safety=high_safety,
+            crit_safety=crit_safety,
+            seconds_done=seconds_done,
+            minute_in_quarter=minute_in_quarter,
+            high_on=self._high_on,
+            critical_on=self._critical_on,
         )
-        max_power_to_peak = min(power_to_consume, DEMAND_MAX_POWER_CAP_KW)
-
-        # High / Critical binary states with a measurement-window gate and a
-        # kW deadband to avoid flapping.
-        if minute_in_quarter < DEMAND_HIGH_GATE_MINUTES:
-            high = False
-        elif self._high_on:
-            high = estimate >= (high_limit - DEMAND_HYSTERESIS_KW)
-        else:
-            high = estimate >= high_limit
-        self._high_on = high
-
-        if minute_in_quarter < DEMAND_CRITICAL_GATE_MINUTES:
-            critical = False
-        elif self._critical_on:
-            critical = estimate >= (critical_limit - DEMAND_HYSTERESIS_KW)
-        else:
-            critical = estimate >= critical_limit
-        self._critical_on = critical
+        estimate = r.estimate
+        month_max = r.month_max
+        high_limit = r.high_limit
+        critical_limit = r.critical_limit
+        max_power_to_peak = r.max_power_to_peak
+        high = r.high
+        critical = r.critical
+        self._high_on = r.high_on
+        self._critical_on = r.critical_on
 
         # Retain the previous month-max whenever the value changes, so a new
         # peak can be reported against what it was before. Persisted on change.

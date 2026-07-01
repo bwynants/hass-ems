@@ -6,34 +6,34 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.util import dt as dt_util
 from .const import (
-    DOMAIN, CONF_PEAK_TARIFF_SENSOR, CONF_NAME,
-    CONF_AUTO_SWITCHING, DEFAULT_AUTO_SWITCHING,
+    DOMAIN, CONF_PEAK_TARIFF_SENSOR, CONF_NAME, CONF_VOLTAGE,
+    CONF_AUTO_SWITCHING, DEFAULT_AUTO_SWITCHING, DEFAULT_VOLTAGE,
     CONTROLLER_UPDATE_INTERVAL, get_appliances,
 )
-from . import battery
-from .optimizer import ApplianceOptimizerMixin
-from .demand_control import DemandControlMixin
 from .helpers import read_sensor, read_sensor_optional, read_binary
+from . import control
+from . import ems_core
 
 _LOGGER = logging.getLogger(__name__)
 
 
-class SolarApplianceCoordinator(ApplianceOptimizerMixin, DemandControlMixin, DataUpdateCoordinator):
-    """Coordinator
+class SolarApplianceCoordinator(DataUpdateCoordinator):
+    """Coordinator — the imperative shell around the pure ``ems_core`` engine.
 
-    Periodically reads sensor data, runs the optimizer and planner,
-    and applies control decisions. The optimizer / demand-control logic lives in
-    the mixins (:mod:`optimizer`, :mod:`demand_control`); battery SoC reads in
-    :mod:`battery`. This class owns the update cycle, config persistence and the
-    thin sensor-read wrappers the mixins call.
+    Each cycle it reads a snapshot of the sensors/config into ``ems_core``
+    dataclasses (via :mod:`control`), calls the pure decision functions, and
+    applies the returned commands via HA services. It owns the runtime state
+    (``appliance_states``), config persistence, and the demand-coordinator link.
     """
     config_entry: ConfigEntry
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry):
         super().__init__(hass, _LOGGER, name=DOMAIN, config_entry=entry, update_interval=timedelta(seconds=CONTROLLER_UPDATE_INTERVAL))
         self.entry = entry
-        self.appliance_states = {}
+        # name -> ems_core.ApplianceState
+        self.appliance_states: dict[str, ems_core.ApplianceState] = {}
         self._enabled = entry.options.get(CONF_AUTO_SWITCHING, DEFAULT_AUTO_SWITCHING)
         self._last_excess = 0.0
         self._last_soc = None
@@ -167,31 +167,59 @@ class SolarApplianceCoordinator(ApplianceOptimizerMixin, DemandControlMixin, Dat
         """Read a binary sensor, returns True/False/None."""
         return read_binary(self.hass, entity_id)
 
+    # ---- Quarter-hour demand (peak control) reads from the demand coordinator ----
+    def _demand_data(self):
+        """Return the demand coordinator's data when the feature is active."""
+        dc = self.demand_coordinator
+        if dc is None or not getattr(dc, "feature_active", False):
+            return None
+        return dc.data
+
+    def _is_demand_critical(self) -> bool:
+        """True when the quarter-hour demand is critical (peak control always on)."""
+        demand = self._demand_data()
+        return bool(demand and demand.get("critical"))
+
+    def _get_peak_amps(self, voltage: float):
+        """Peak headroom in amps (from Max Power To Peak Limit), or None."""
+        demand = self._demand_data()
+        if not demand:
+            return None
+        kw = demand.get("max_power_to_peak")
+        if kw is None or voltage <= 0:
+            return None
+        return kw * 1000.0 / voltage
+
     async def _async_update_data(self):
-        data = {**self.entry.data, **self.entry.options}
+        config = {**self.entry.data, **self.entry.options}
         appliances = get_appliances(self.entry)
         _LOGGER.debug(
             "==== EMS cycle start: %d appliance(s), auto_switching=%s ====",
             len(appliances), self.enabled,
         )
 
-        # SoC and the protection threshold are derived from the appliances that
-        # are flagged as batteries (each carries its own SoC sensor and min_soc).
-        self._last_soc = battery.current_soc(self.hass, appliances)
-        self._battery_min_soc = battery.battery_min_soc(appliances)
-        self._battery_protection_mode = battery.battery_protection_mode(appliances)
+        voltage = self._read_sensor(config.get(CONF_VOLTAGE), default=DEFAULT_VOLTAGE)
+        inputs, raw_by_name = control.build_appliance_inputs(
+            self.hass, appliances, self, voltage
+        )
+        energy = control.build_energy_input(self.hass, config, voltage)
+        now = dt_util.utcnow()
+
+        # SoC / protection threshold, derived from the battery appliances.
+        battery = ems_core.battery_status(inputs)
+        self._last_soc = battery.soc
+        self._battery_min_soc = battery.min_soc
+        self._battery_protection_mode = battery.protection_mode
         if self._last_soc is not None or self._battery_min_soc is not None:
             _LOGGER.debug(
                 "battery: soc=%s, min_soc=%s, protection=%s",
                 self._last_soc, self._battery_min_soc, self._battery_protection_mode,
             )
 
-        # Amps the managed appliances are currently drawing (exposed as a sensor
-        # and added back to the grid-export budget further down).
-        managed_amps = self._get_managed_consumption_amps(appliances, data)
+        # Amps the managed appliances are currently drawing (added back below).
+        managed_amps = ems_core.managed_consumption_amps(inputs)
         _LOGGER.debug("managed appliances currently drawing %.2f A", managed_amps)
 
-        # Quarter-hour demand snapshot (drives peak-aware control), if configured.
         demand = self._demand_data()
         if demand:
             _LOGGER.debug(
@@ -200,20 +228,20 @@ class SolarApplianceCoordinator(ApplianceOptimizerMixin, DemandControlMixin, Dat
                 demand.get("high"), demand.get("critical"), demand.get("max_power_to_peak"),
             )
 
-        # Quarter-hour demand is critical: force everything off to protect the
-        # monthly peak (emergency backstop if graceful throttling can't keep up).
-        if self._is_demand_critical(data):
+        # Critical demand: force everything off to protect the monthly peak.
+        if self._is_demand_critical():
             if self.enabled:
                 _LOGGER.warning(
                     "demand CRITICAL -> throttling managed appliances to min, then shedding"
                 )
-                kept, kept_amps = self._critical_shed(appliances)
-                await self._apply_appliance_states(appliances, kept)
+                shed = ems_core.critical_shed(inputs, self.appliance_states, now)
+                await control.apply_commands(
+                    self.hass, shed.kept, shed.fixed_amps_commands, inputs, raw_by_name
+                )
+                kept, kept_amps = shed.kept, shed.kept_amps
             else:
                 kept, kept_amps = [], 0.0
-                _LOGGER.warning(
-                    "demand CRITICAL (auto-switching off; not intervening)"
-                )
+                _LOGGER.warning("demand CRITICAL (auto-switching off; not intervening)")
             _LOGGER.debug(
                 "==== EMS cycle end: critical (kept at min: %s) ====", kept or "none"
             )
@@ -227,9 +255,10 @@ class SolarApplianceCoordinator(ApplianceOptimizerMixin, DemandControlMixin, Dat
                 "managed_amps": round(kept_amps, 2),
             }
 
-        # Total surplus available for managed loads = grid surplus + the draw
-        # already taken by managed appliances (added back to work from gross).
-        grid_surplus = self._calculate_excess_amps(data)
+        # Total surplus = grid surplus + managed draw added back (gross surplus).
+        grid_surplus = ems_core.calculate_excess_amps(
+            energy.grid_w, energy.solar_w, energy.house_load_w, voltage
+        )
         excess_amps = grid_surplus + managed_amps
         self._last_excess = excess_amps
         _LOGGER.debug(
@@ -237,7 +266,8 @@ class SolarApplianceCoordinator(ApplianceOptimizerMixin, DemandControlMixin, Dat
             excess_amps, grid_surplus, managed_amps,
         )
 
-        self._update_histories(appliances, excess_amps)
+        # Roll the excess into the averaging history (also on disabled cycles).
+        ems_core.record_excess(inputs, self.appliance_states, excess_amps)
 
         if not self.enabled:
             _LOGGER.debug(
@@ -253,26 +283,30 @@ class SolarApplianceCoordinator(ApplianceOptimizerMixin, DemandControlMixin, Dat
                 "managed_amps": round(managed_amps, 2),
             }
 
-        peak_amps = self._get_peak_amps(data)
+        peak_amps = self._get_peak_amps(voltage)
         _LOGGER.debug(
             "peak headroom: %s",
             "off (no demand feature)" if peak_amps is None else f"{peak_amps:.2f} A",
         )
-        active, decided_amps = self._optimize_appliances(appliances, excess_amps, data, peak_amps)
-        await self._apply_appliance_states(appliances, active)
+        result = ems_core.optimize(
+            inputs, self.appliance_states, excess_amps, peak_amps, energy, battery, now
+        )
+        await control.apply_commands(
+            self.hass, result.active, result.fixed_amps_commands, inputs, raw_by_name
+        )
 
         _LOGGER.debug(
             "result: active=%s | decided draw=%.2f A | spare(excess)=%.2f A",
-            active, decided_amps, excess_amps,
+            result.active, result.decided_amps, excess_amps,
         )
         _LOGGER.debug("==== EMS cycle end ====")
         return {
             "excess_amps": round(excess_amps, 2),
             "soc": self._last_soc,
-            "active_appliances": active,
+            "active_appliances": result.active,
             "appliances": appliances,
             "auto_switching": True,
             # Report the draw the optimizer just decided (fresh setpoints), so
             # Managed Consumption updates this cycle instead of lagging one.
-            "managed_amps": round(decided_amps, 2),
+            "managed_amps": round(result.decided_amps, 2),
         }

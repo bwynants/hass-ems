@@ -1,0 +1,18 @@
+# Package manifest for the pure `ems_core` decision library.
+#
+# Home Assistant ignores this file at runtime. The unit tests need no Home
+# Assistant install; run them pointed at the tests directory from OUTSIDE the
+# component directory (so this package's own select.py does not shadow the
+# stdlib `select` during pytest startup):
+#     python3 -m pytest /Volumes/config/custom_components/energy_management_system/tests
+# Pytest configuration lives in tests/pytest.ini so its rootdir is the tests
+# directory, not this component package.
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ems-core"
+version = "0.1.0"
+description = "Home-Assistant-independent decision core for the Energy Management System integration"
+requires-python = ">=3.11"

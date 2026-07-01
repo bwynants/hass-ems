@@ -1,0 +1,73 @@
+"""Domain constants and numeric defaults for the EMS decision core.
+
+Pure values only — no Home Assistant imports and no config-key strings (those
+stay in the integration's ``const.py``). The HA ``const.py`` re-exports these so
+existing imports keep working.
+"""
+from __future__ import annotations
+
+# Runtime modes. "unmanaged" means EMS ignores the appliance entirely (it
+# neither switches it on/off nor adjusts it) — the replacement for the old
+# per-appliance enable switch.
+MODE_FORCED = "forced"
+MODE_PARTIAL_SOLAR = "partial_solar"
+MODE_FULL_SOLAR = "full_solar"
+MODE_OFF_PEAK = "off_peak"
+MODE_UNMANAGED = "unmanaged"
+MODES = [MODE_UNMANAGED, MODE_OFF_PEAK, MODE_PARTIAL_SOLAR, MODE_FULL_SOLAR, MODE_FORCED]
+DEFAULT_MODE = MODE_PARTIAL_SOLAR
+
+# Battery SoC-protection modes.
+BATTERY_MODE_STRICT = "strict"
+BATTERY_MODE_RELAXED = "relaxed"
+DEFAULT_BATTERY_MODE = BATTERY_MODE_STRICT
+BATTERY_PROTECTION_MODES = [BATTERY_MODE_STRICT, BATTERY_MODE_RELAXED]
+
+# Appliance / control defaults.
+DEFAULT_VOLTAGE = 230
+DEFAULT_MIN_SOC = 20
+DEFAULT_HYSTERESIS = 120
+DEFAULT_MIN_AMPS = 6
+DEFAULT_PRIORITY = 100
+DEFAULT_MAX_AMPS = 16
+DEFAULT_FIXED_AMPS_HYSTERESIS_SECONDS = 120
+DEFAULT_AVERAGING = 180
+DEFAULT_SOC_HYSTERESIS = 5
+DEFAULT_IGNORE_PROTECTION = False
+DEFAULT_AUTO_SWITCHING = True
+DEFAULT_IS_BATTERY = False
+# Minimum excess watts required to run in partial_solar mode (per appliance).
+DEFAULT_PARTIAL_MIN_EXCESS = 1000
+
+# Off-peak breakeven default tariff rates (€/kWh). Not exposed in the UI, so the
+# breakeven gate always uses these unless a config override is supplied.
+DEFAULT_COST_PEAK = 0.40
+DEFAULT_COST_OFFPEAK = 0.20
+DEFAULT_GAIN_EXPORT = 0.10
+
+# Main coordinator cycle interval (s) and the fixed_amps setpoint deadband (A).
+# The fixed_amps setpoint is quantised to whole amps, rounded DOWN with this
+# margin: run at N amps only once N + margin is available (e.g. 6.8 -> 6, and it
+# steps up to 7 only at 7.5). The margin also acts as a deadband against flicker.
+CONTROLLER_UPDATE_INTERVAL = 10
+FIXED_AMPS_DEADBAND = 0.5
+
+# How much wall-clock history to keep per appliance for excess averaging, and
+# the resulting sample count (one sample per cycle). Derived from the cycle
+# interval so the retained duration stays fixed (1 hour) regardless of the poll
+# rate — this is also the longest averaging window that can be honoured in full.
+APPLIANCE_HISTORY_SECONDS = 3600
+APPLIANCE_HISTORY_MAXLEN = APPLIANCE_HISTORY_SECONDS // CONTROLLER_UPDATE_INTERVAL
+
+# Quarterly demand defaults (kW). Thresholds entered as plain numbers in config.
+DEFAULT_MINIMAL_PEAK_WARNING = 4.0
+DEFAULT_PEAK_HIGH_SAFETY = 0.4
+DEFAULT_PEAK_CRITICAL_SAFETY = 0.2
+
+# Quarterly demand constants (match peakpower.yaml).
+DEMAND_QUARTER_SECONDS = 900
+DEMAND_MAX_POWER_CAP_KW = 40.0
+DEMAND_HYSTERESIS_KW = 0.2
+DEMAND_HIGH_GATE_MINUTES = 6
+DEMAND_CRITICAL_GATE_MINUTES = 8
+DEMAND_UPDATE_INTERVAL_SECONDS = 10
