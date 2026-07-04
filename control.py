@@ -13,7 +13,7 @@ from homeassistant.const import STATE_ON
 from homeassistant.core import split_entity_id
 
 from .const import (
-    CONF_VOLTAGE, CONF_GRID_EXPORT, CONF_SOLAR_PRODUCTION, CONF_HOUSE_LOAD,
+    CONF_GRID_EXPORT, CONF_SOLAR_PRODUCTION, CONF_HOUSE_LOAD,
     CONF_PEAK_TARIFF_SENSOR, CONF_NAME, CONF_ENTITY_ID, CONF_PRIORITY,
     CONF_MIN_AMPS, CONF_MAX_AMPS, CONF_FIXED_AMPS, CONF_FIXED_AMPS_HYSTERESIS_SECONDS,
     CONF_POWER_SENSOR, CONF_PARTIAL_MIN_EXCESS, CONF_CONNECTED_SENSOR,
@@ -21,7 +21,7 @@ from .const import (
     CONF_IGNORE_BATTERY_PROTECTION, CONF_SOC_HYSTERESIS_PERCENT, CONF_IS_BATTERY,
     CONF_BATTERY_SOC_SENSOR, CONF_MIN_SOC, CONF_BATTERY_PROTECTION_MODE,
     CONF_RUNTIME_MODE, CONF_RUNTIME_MODES,
-    DEFAULT_MIN_AMPS, DEFAULT_MAX_AMPS, DEFAULT_VOLTAGE, DEFAULT_HYSTERESIS,
+    DEFAULT_MIN_AMPS, DEFAULT_MAX_AMPS, DEFAULT_PRIORITY, DEFAULT_HYSTERESIS,
     DEFAULT_AVERAGING, DEFAULT_SOC_HYSTERESIS, DEFAULT_IGNORE_PROTECTION,
     DEFAULT_FIXED_AMPS_HYSTERESIS_SECONDS, DEFAULT_PARTIAL_MIN_EXCESS,
     DEFAULT_MIN_SOC, DEFAULT_BATTERY_MODE, DEFAULT_MODE,
@@ -29,7 +29,7 @@ from .const import (
     MODE_UNMANAGED,
 )
 from .helpers import read_sensor, read_sensor_optional, UNAVAILABLE_STATES
-from .ems_core import ApplianceInput, EnergyInput, SetFixedAmps
+from .ems_core import ApplianceInput, EnergyInput
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -103,7 +103,7 @@ def build_appliance_inputs(hass, appliances, coordinator, voltage: float):
         inputs.append(
             ApplianceInput(
                 name=name,
-                priority=app.get(CONF_PRIORITY, 999),
+                priority=app.get(CONF_PRIORITY, DEFAULT_PRIORITY),
                 min_amps=app.get(CONF_MIN_AMPS, DEFAULT_MIN_AMPS),
                 max_amps=app.get(CONF_MAX_AMPS, DEFAULT_MAX_AMPS),
                 mode=_resolve_mode(coordinator, app),
@@ -134,9 +134,12 @@ def build_appliance_inputs(hass, appliances, coordinator, voltage: float):
 
 
 async def _write_fixed_amps(hass, entity_id: str, value: float, name: str) -> None:
+    # The fixed_amps entity may be an input_number or a number entity; both
+    # domains expose an identical set_value service.
+    domain = split_entity_id(entity_id)[0]
     try:
         await hass.services.async_call(
-            "input_number", "set_value",
+            domain, "set_value",
             {"entity_id": entity_id, "value": value}, blocking=True,
         )
         _LOGGER.debug("Updated %s fixed_amps entity to %.1f amps", name, value)

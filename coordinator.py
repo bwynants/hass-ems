@@ -12,7 +12,7 @@ from .const import (
     CONF_AUTO_SWITCHING, DEFAULT_AUTO_SWITCHING, DEFAULT_VOLTAGE,
     CONTROLLER_UPDATE_INTERVAL, get_appliances,
 )
-from .helpers import read_sensor, read_sensor_optional, read_binary
+from .helpers import read_sensor
 from . import control
 from . import ems_core
 
@@ -158,14 +158,6 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
     def _read_sensor(self, entity_id: str | None, default: float = 0.0) -> float:
         """Read a numeric sensor (watts-normalised for power) or return default."""
         return read_sensor(self.hass, entity_id, default)
-
-    def _read_sensor_optional(self, entity_id: str | None) -> float | None:
-        """Read a numeric sensor (watts-normalised for power) or return None."""
-        return read_sensor_optional(self.hass, entity_id)
-
-    def _read_binary(self, entity_id: str | None) -> bool | None:
-        """Read a binary sensor, returns True/False/None."""
-        return read_binary(self.hass, entity_id)
 
     # ---- Quarter-hour demand (peak control) reads from the demand coordinator ----
     def _demand_data(self):

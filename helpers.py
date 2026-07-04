@@ -52,16 +52,6 @@ def read_sensor_optional(hass: HomeAssistant, entity_id: str | None) -> float | 
     return val
 
 
-def read_binary(hass: HomeAssistant, entity_id: str | None) -> bool | None:
-    """Read a binary sensor as True/False, or None when unavailable."""
-    if not entity_id:
-        return None
-    state = hass.states.get(entity_id)
-    if state is None or state.state in ("unavailable", "unknown"):
-        return None
-    return state.state == "on"
-
-
 def read_kw(hass: HomeAssistant, entity_id: str | None) -> float | None:
     """Read a sensor value in kW, or None.
 

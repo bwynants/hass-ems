@@ -55,6 +55,10 @@ class ApplianceState:
         default_factory=lambda: deque(maxlen=APPLIANCE_HISTORY_MAXLEN)
     )
     soc_blocked: bool = False
+    # True while a full_solar appliance is in the transient-spike condition
+    # (current budget covers, sustained average doesn't) — used to log the
+    # reason once on entry instead of every cycle.
+    full_solar_spike: bool = False
 
 
 @dataclass
@@ -114,7 +118,11 @@ class ShedResult:
 
 @dataclass
 class DemandResult:
-    """Quarter-hour demand computation (all kW except the boolean flags)."""
+    """Quarter-hour demand computation (all kW except the boolean flags).
+
+    ``high``/``critical`` are also the new latch state — feed them back as the
+    ``high_on``/``critical_on`` inputs on the next cycle.
+    """
     estimate: float
     month_max: float
     high_limit: float
@@ -122,5 +130,3 @@ class DemandResult:
     max_power_to_peak: float
     high: bool
     critical: bool
-    high_on: bool
-    critical_on: bool

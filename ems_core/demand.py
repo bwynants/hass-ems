@@ -30,7 +30,7 @@ def compute_demand(
     quarter so far (the shell zeroes it when ``seconds_done`` is 0);
     ``power_consumed`` is the current draw used to project to the quarter's end.
     ``high_on``/``critical_on`` are the previous latched flags (for hysteresis);
-    the new latches are returned in the result.
+    the returned ``high``/``critical`` are the new latch state.
     """
     seconds_remaining = max(DEMAND_QUARTER_SECONDS - seconds_done, 1)
 
@@ -69,6 +69,4 @@ def compute_demand(
         max_power_to_peak=max_power_to_peak,
         high=high,
         critical=critical,
-        high_on=high,
-        critical_on=critical,
     )

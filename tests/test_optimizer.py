@@ -1,4 +1,5 @@
 """Tests for ems_core.optimizer — allocation, throttling, SoC, hysteresis, shed."""
+import logging
 from datetime import datetime, timedelta
 
 from ems_core.optimizer import optimize, critical_shed
@@ -6,7 +7,7 @@ from ems_core.models import (
     ApplianceInput, ApplianceState, EnergyInput, BatteryStatus, SetFixedAmps,
 )
 from ems_core.const import (
-    MODE_FORCED, MODE_PARTIAL_SOLAR, MODE_FULL_SOLAR, MODE_OFF_PEAK, MODE_UNMANAGED,
+    MODE_FORCED, MODE_PARTIAL_SOLAR, MODE_FULL_SOLAR, MODE_UNMANAGED,
     BATTERY_MODE_STRICT, BATTERY_MODE_RELAXED,
 )
 
@@ -97,16 +98,33 @@ def test_full_solar_on_when_covered():
     assert res.active == ["a"]
 
 
-def test_full_solar_off_on_transient_spike():
+def test_full_solar_off_on_transient_spike(caplog):
     # Current budget covers (10 >= 6) but the sustained average does not (2 < 6)
     # -> full_solar must NOT commit (would import once the spike passes).
     app = _app(mode=MODE_FULL_SOLAR, min_amps=6, averaging_window_seconds=180)
     st = ApplianceState()
     st.excess_history.extend([2.0, 2.0, 2.0])
     states = {"a": st}
-    res = optimize([app], states, excess_amps=10.0, peak_amps=None,
-                   energy=_energy(), battery=NO_BAT, now=T0)
+    with caplog.at_level(logging.INFO, logger="ems_core.optimizer"):
+        res = optimize([app], states, excess_amps=10.0, peak_amps=None,
+                       energy=_energy(), battery=NO_BAT, now=T0)
     assert res.active == []
+
+    def spike_infos():
+        return [
+            r for r in caplog.records
+            if r.levelno == logging.INFO and "transient spike" in r.getMessage()
+        ]
+
+    # The transient-spike reason is surfaced at INFO once, on entry...
+    assert len(spike_infos()) == 1
+    # ...and repeats of the same condition don't log INFO again (edge-triggered).
+    with caplog.at_level(logging.INFO, logger="ems_core.optimizer"):
+        res2 = optimize([app], states, excess_amps=10.0, peak_amps=None,
+                        energy=_energy(), battery=NO_BAT,
+                        now=T0 + timedelta(seconds=10))
+    assert res2.active == []
+    assert len(spike_infos()) == 1
 
 
 def test_full_solar_on_when_sustained_and_current():

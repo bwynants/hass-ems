@@ -71,7 +71,7 @@ _LOGGER = logging.getLogger(__name__)
 
 # Entity selectors
 SENSOR_ENTITY_SELECTOR = EntitySelector(
-    EntitySelectorConfig(domain=["sensor", "input_number"])
+    EntitySelectorConfig(domain=["sensor", "number", "input_number"])
 )
 NUMBER_ENTITY_SELECTOR = EntitySelector(
     EntitySelectorConfig(domain=["number", "input_number"])
@@ -144,7 +144,7 @@ def _global_schema(current: dict | None) -> vol.Schema:
         _suggest_marker(CONF_DEMAND_POWER_CONSUMED_SENSOR, current): SENSOR_ONLY_SELECTOR,
         _suggest_marker(CONF_DEMAND_MONTH_MAX_SENSOR, current): SENSOR_ONLY_SELECTOR,
         _suggest_marker(CONF_PEAK_TARIFF_SENSOR, current): BINARY_SENSOR_ENTITY_SELECTOR,
-        _suggest_marker(CONF_VOLTAGE, current): NUMBER_ENTITY_SELECTOR,
+        _suggest_marker(CONF_VOLTAGE, current): SENSOR_ENTITY_SELECTOR,
         _default_marker(CONF_MINIMAL_PEAK_WARNING, current, DEFAULT_MINIMAL_PEAK_WARNING): vol.All(vol.Coerce(float), vol.Range(min=0)),
         _default_marker(CONF_PEAK_HIGH_SAFETY, current, DEFAULT_PEAK_HIGH_SAFETY): vol.All(vol.Coerce(float), vol.Range(min=0)),
         _default_marker(CONF_PEAK_CRITICAL_SAFETY, current, DEFAULT_PEAK_CRITICAL_SAFETY): vol.All(vol.Coerce(float), vol.Range(min=0)),
@@ -157,8 +157,8 @@ def _appliance_schema(current: dict | None) -> vol.Schema:
         _prefill_marker(CONF_NAME, current, required=True, edit_default="Appliance"): str,
         _prefill_marker(CONF_ENTITY_ID, current, required=True): SWITCH_ENTITY_SELECTOR,
         _default_marker(CONF_PRIORITY, current, DEFAULT_PRIORITY, required=True): vol.All(int, vol.Range(0, 100)),
-        _default_marker(CONF_MIN_AMPS, current, DEFAULT_MIN_AMPS, required=True): vol.All(int, vol.Range(2, 20)),
-        _default_marker(CONF_MAX_AMPS, current, DEFAULT_MAX_AMPS, required=True): vol.All(int, vol.Range(2, 20)),
+        _default_marker(CONF_MIN_AMPS, current, DEFAULT_MIN_AMPS, required=True): vol.All(int, vol.Range(1, 20)),
+        _default_marker(CONF_MAX_AMPS, current, DEFAULT_MAX_AMPS, required=True): vol.All(int, vol.Range(1, 20)),
         _suggest_marker(CONF_FIXED_AMPS, current): NUMBER_ENTITY_SELECTOR,
         _default_marker(CONF_FIXED_AMPS_HYSTERESIS_SECONDS, current, DEFAULT_FIXED_AMPS_HYSTERESIS_SECONDS): vol.All(int, vol.Range(min=0)),
         _suggest_marker(CONF_POWER_SENSOR, current): SENSOR_ENTITY_SELECTOR,

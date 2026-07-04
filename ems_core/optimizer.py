@@ -48,7 +48,13 @@ def _averaged_excess(app: ApplianceInput, state: ApplianceState, fallback: float
     return sum(recent) / len(recent) if recent else fallback
 
 
-def _basic_condition(app: ApplianceInput, avg_excess: float, remaining: float, energy: EnergyInput) -> bool:
+def _basic_condition(
+    app: ApplianceInput,
+    state: ApplianceState,
+    avg_excess: float,
+    remaining: float,
+    energy: EnergyInput,
+) -> bool:
     name = app.name
     mode = app.mode
 
@@ -70,9 +76,22 @@ def _basic_condition(app: ApplianceInput, avg_excess: float, remaining: float, e
         # off-peak fallback. (Checked before the generic instantaneous
         # early-return below so the averaged requirement is not bypassed.)
         covered = remaining >= required_a and avg_excess >= required_a
-        _LOGGER.debug(
-            "%s mode=full_solar covered=%s (remaining=%s, avg_excess=%s, required_a=%s)",
-            name, covered, remaining, avg_excess, required_a,
+        # "Transient spike": current budget covers but the sustained average
+        # doesn't. Logged at INFO once on entering the condition (it's the
+        # non-obvious reason the run condition fails), then at DEBUG on
+        # repeats. The wording claims only the run condition — the on/off
+        # hysteresis in _should_run may still hold a running appliance on.
+        spike = not covered and remaining >= required_a
+        level = logging.INFO if spike and not state.full_solar_spike else logging.DEBUG
+        state.full_solar_spike = spike
+        _LOGGER.log(
+            level,
+            "%s mode=full_solar %s (remaining=%.2f A, avg_excess=%.2f A, required=%.2f A)%s",
+            name,
+            "covered" if covered else "run condition not met",
+            remaining, avg_excess, required_a,
+            "; current covers but sustained avg too low (transient spike) — "
+            "waiting for sustained solar" if spike else "",
         )
         return covered
 
@@ -159,7 +178,7 @@ def _should_run(
         required_a = app.min_amps
         condition_met = remaining_amps >= required_a
     else:
-        condition_met = _basic_condition(app, avg_excess, remaining_amps, energy)
+        condition_met = _basic_condition(app, state, avg_excess, remaining_amps, energy)
     _LOGGER.debug("%s condition_met=%s", name, condition_met)
 
     # Already in the desired state: nothing to do, leave the timer untouched.

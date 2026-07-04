@@ -141,8 +141,9 @@ class QuarterlyDemandCoordinator(DataUpdateCoordinator):
         max_power_to_peak = r.max_power_to_peak
         high = r.high
         critical = r.critical
-        self._high_on = r.high_on
-        self._critical_on = r.critical_on
+        # high/critical are the new latch state; carry them into the next cycle.
+        self._high_on = r.high
+        self._critical_on = r.critical
 
         # Retain the previous month-max whenever the value changes, so a new
         # peak can be reported against what it was before. Persisted on change.

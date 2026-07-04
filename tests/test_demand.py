@@ -38,7 +38,6 @@ def test_high_triggers_after_gate():
     r = _demand(month_max_src=5.0, current_so_far=10.0, power_consumed=10.0,
                 seconds_done=360, minute_in_quarter=6)
     assert r.high is True
-    assert r.high_on is True
 
 
 def test_high_hysteresis_latch():
