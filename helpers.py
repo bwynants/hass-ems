@@ -5,7 +5,7 @@ These touch ``hass.states`` so they live in the integration (not the pure
 """
 from __future__ import annotations
 
-from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.const import STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
 
 from .ems_core.energy import normalise_power
@@ -30,26 +30,68 @@ def _read_float(hass: HomeAssistant, entity_id: str | None):
         return None
 
 
-def read_sensor(hass: HomeAssistant, entity_id: str | None, default: float = 0.0) -> float:
-    """Read a numeric sensor (watts-normalised for power) or return ``default``."""
-    result = _read_float(hass, entity_id)
-    if result is None:
-        return default
-    val, state = result
-    if state.attributes.get(DEVICE_CLASS) == DEVICE_CLASS_POWER:
-        val = normalise_power(val, state.attributes.get(UNIT_OF_MEASUREMENT))
-    return val
+def _read_normalised(hass: HomeAssistant, entity_id: str | None) -> tuple[float, bool] | None:
+    """Return ``(value, is_power)`` for a numeric entity, or ``None``.
 
-
-def read_sensor_optional(hass: HomeAssistant, entity_id: str | None) -> float | None:
-    """Read a numeric sensor (watts-normalised for power) or return ``None``."""
+    Power-class values are unit-normalised to watts; the single place the
+    device-class/unit normalisation happens.
+    """
     result = _read_float(hass, entity_id)
     if result is None:
         return None
     val, state = result
     if state.attributes.get(DEVICE_CLASS) == DEVICE_CLASS_POWER:
-        val = normalise_power(val, state.attributes.get(UNIT_OF_MEASUREMENT))
-    return val
+        return normalise_power(val, state.attributes.get(UNIT_OF_MEASUREMENT)), True
+    return val, False
+
+
+def read_sensor_optional(hass: HomeAssistant, entity_id: str | None) -> float | None:
+    """Read a numeric sensor (watts-normalised for power) or return ``None``."""
+    result = _read_normalised(hass, entity_id)
+    return None if result is None else result[0]
+
+
+def read_sensor(hass: HomeAssistant, entity_id: str | None, default: float = 0.0) -> float:
+    """Read a numeric sensor (watts-normalised for power) or return ``default``."""
+    val = read_sensor_optional(hass, entity_id)
+    return default if val is None else val
+
+
+def read_value(hass: HomeAssistant, source, default: float) -> float:
+    """Read a config value that is an entity id, or fall back to ``default``.
+
+    Accepts a plain number too (legacy entries stored the value directly);
+    an unset source or an unavailable entity yields ``default``.
+    """
+    if source is None or source == "":
+        return default
+    if isinstance(source, (int, float)):
+        return float(source)
+    val = read_sensor_optional(hass, source)
+    return default if val is None else val
+
+
+def read_binary(
+    hass: HomeAssistant,
+    entity_id: str | None,
+    *,
+    missing: bool,
+    unavailable: bool,
+) -> bool:
+    """Read an on/off entity with explicit fallback semantics.
+
+    ``missing`` is returned when no entity is configured; ``unavailable`` when
+    the entity exists but is currently unavailable/unknown. Callers choose the
+    safe direction per use — e.g. an unavailable connected-sensor should not be
+    treated as "disconnected" (which would drop a running appliance with no
+    hysteresis), and an unavailable tariff sensor should assume peak.
+    """
+    if not entity_id:
+        return missing
+    state = hass.states.get(entity_id)
+    if state is None or state.state in UNAVAILABLE_STATES:
+        return unavailable
+    return state.state == STATE_ON
 
 
 def read_kw(hass: HomeAssistant, entity_id: str | None) -> float | None:
@@ -58,10 +100,8 @@ def read_kw(hass: HomeAssistant, entity_id: str | None) -> float | None:
     Power-class sources are unit-normalised to watts then divided by 1000;
     non-power sources are assumed to already be in kW.
     """
-    result = _read_float(hass, entity_id)
+    result = _read_normalised(hass, entity_id)
     if result is None:
         return None
-    val, state = result
-    if state.attributes.get(DEVICE_CLASS) == DEVICE_CLASS_POWER:
-        val = normalise_power(val, state.attributes.get(UNIT_OF_MEASUREMENT)) / 1000.0
-    return val
+    val, is_power = result
+    return val / 1000.0 if is_power else val

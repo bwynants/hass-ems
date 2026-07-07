@@ -10,6 +10,9 @@ from homeassistant.core import callback
 from homeassistant.helpers.selector import (
     EntitySelector,
     EntitySelectorConfig,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
 )
 
 from homeassistant.config_entries import (
@@ -65,6 +68,9 @@ from .const import (
     DEFAULT_MINIMAL_PEAK_WARNING,
     DEFAULT_PEAK_HIGH_SAFETY,
     DEFAULT_PEAK_CRITICAL_SAFETY,
+    CONF_COST_PEAK,
+    CONF_COST_OFFPEAK,
+    CONF_GAIN_EXPORT,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -86,6 +92,15 @@ BINARY_SENSOR_ENTITY_SELECTOR = EntitySelector(
 # deliberately NOT offered (those values are entered as plain numbers).
 SENSOR_ONLY_SELECTOR = EntitySelector(
     EntitySelectorConfig(domain="sensor")
+)
+# Translated dropdown for the battery protection mode (renders the
+# selector.battery_protection_mode strings instead of raw values).
+BATTERY_MODE_SELECTOR = SelectSelector(
+    SelectSelectorConfig(
+        options=BATTERY_PROTECTION_MODES,
+        translation_key="battery_protection_mode",
+        mode=SelectSelectorMode.DROPDOWN,
+    )
 )
 
 
@@ -137,9 +152,11 @@ def _default_marker(key, current, default, required=False):
 def _global_schema(current: dict | None) -> vol.Schema:
     """Schema for the global setup (create: current=None) / options (edit) forms."""
     return vol.Schema({
-        _prefill_marker(CONF_GRID_EXPORT, current): SENSOR_ENTITY_SELECTOR,
+        # Optional entity fields use suggested_value so they stay CLEARABLE on
+        # edit (a default= would re-insert the old value on every save).
+        _suggest_marker(CONF_GRID_EXPORT, current): SENSOR_ENTITY_SELECTOR,
         _prefill_marker(CONF_SOLAR_PRODUCTION, current, required=True): SENSOR_ENTITY_SELECTOR,
-        _prefill_marker(CONF_HOUSE_LOAD, current): SENSOR_ENTITY_SELECTOR,
+        _suggest_marker(CONF_HOUSE_LOAD, current): SENSOR_ENTITY_SELECTOR,
         _suggest_marker(CONF_DEMAND_POWER_CURRENT_PEAK_SENSOR, current): SENSOR_ONLY_SELECTOR,
         _suggest_marker(CONF_DEMAND_POWER_CONSUMED_SENSOR, current): SENSOR_ONLY_SELECTOR,
         _suggest_marker(CONF_DEMAND_MONTH_MAX_SENSOR, current): SENSOR_ONLY_SELECTOR,
@@ -148,6 +165,12 @@ def _global_schema(current: dict | None) -> vol.Schema:
         _default_marker(CONF_MINIMAL_PEAK_WARNING, current, DEFAULT_MINIMAL_PEAK_WARNING): vol.All(vol.Coerce(float), vol.Range(min=0)),
         _default_marker(CONF_PEAK_HIGH_SAFETY, current, DEFAULT_PEAK_HIGH_SAFETY): vol.All(vol.Coerce(float), vol.Range(min=0)),
         _default_marker(CONF_PEAK_CRITICAL_SAFETY, current, DEFAULT_PEAK_CRITICAL_SAFETY): vol.All(vol.Coerce(float), vol.Range(min=0)),
+        # Electricity prices (€/kWh) for the off_peak-mode breakeven decision:
+        # selectable sensor/number entities (dynamic tariffs), read each cycle.
+        # Unset ⇒ the built-in defaults.
+        _suggest_marker(CONF_COST_PEAK, current): SENSOR_ENTITY_SELECTOR,
+        _suggest_marker(CONF_COST_OFFPEAK, current): SENSOR_ENTITY_SELECTOR,
+        _suggest_marker(CONF_GAIN_EXPORT, current): SENSOR_ENTITY_SELECTOR,
     })
 
 
@@ -176,7 +199,7 @@ def _appliance_schema(current: dict | None) -> vol.Schema:
         _default_marker(CONF_IS_BATTERY, current, DEFAULT_IS_BATTERY): bool,
         _suggest_marker(CONF_BATTERY_SOC_SENSOR, current): SENSOR_ENTITY_SELECTOR,
         _default_marker(CONF_MIN_SOC, current, DEFAULT_MIN_SOC): vol.All(int, vol.Range(0, 100)),
-        _default_marker(CONF_BATTERY_PROTECTION_MODE, current, DEFAULT_BATTERY_MODE): vol.In(BATTERY_PROTECTION_MODES),
+        _default_marker(CONF_BATTERY_PROTECTION_MODE, current, DEFAULT_BATTERY_MODE): BATTERY_MODE_SELECTOR,
     })
 
 
@@ -250,10 +273,30 @@ class SolarApplianceOptionsFlow(OptionsFlow):
         if user_input is not None:
             if not errors:
                 self.data.update(user_input)
+                # Optional entity fields (suggested_value markers) are omitted
+                # from user_input when the user clears them. Drop any that were
+                # left empty so they can actually be removed — e.g. clearing the
+                # demand sensors disables the quarterly-demand feature.
+                for key in (
+                    CONF_GRID_EXPORT,
+                    CONF_HOUSE_LOAD,
+                    CONF_DEMAND_POWER_CURRENT_PEAK_SENSOR,
+                    CONF_DEMAND_POWER_CONSUMED_SENSOR,
+                    CONF_DEMAND_MONTH_MAX_SENSOR,
+                    CONF_PEAK_TARIFF_SENSOR,
+                    CONF_VOLTAGE,
+                    CONF_COST_PEAK,
+                    CONF_COST_OFFPEAK,
+                    CONF_GAIN_EXPORT,
+                ):
+                    if key not in user_input:
+                        self.data.pop(key, None)
                 self.hass.config_entries.async_update_entry(
                     self.config_entry, data=self.data
                 )
-                return self.async_create_entry(data={})
+                # Preserve entry.options — returning {} here would wipe the
+                # persisted auto-switching state and runtime-mode fallback map.
+                return self.async_create_entry(data=dict(self.config_entry.options))
 
         return self.async_show_form(
             step_id="user",
@@ -273,6 +316,16 @@ class OptionsFlowHandler(ConfigSubentryFlow):
         self._data: dict[str, Any] = {}
         self._subentry_id: str | None = None
 
+    def _existing_names(self, exclude_subentry_id: str | None = None) -> set[str]:
+        """Names of the already-configured appliances (lowercased)."""
+        entry = self._get_entry()
+        return {
+            str(se.data.get(CONF_NAME, "")).strip().lower()
+            for se in entry.subentries.values()
+            if se.subentry_type == SUBENTRY_TYPE_APPLIANCE
+            and se.subentry_id != exclude_subentry_id
+        }
+
     # ---------------------- Create new appliance ----------------------
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -281,6 +334,10 @@ class OptionsFlowHandler(ConfigSubentryFlow):
         errors: dict[str, str] = {}
 
         if user_input is not None:
+            # Names must be unique: entities, logs and the UI all identify
+            # appliances by name.
+            if str(user_input.get(CONF_NAME, "")).strip().lower() in self._existing_names():
+                errors[CONF_NAME] = "duplicate_name"
             if not errors:
                 self._data.update(user_input)
                 title = self._data.get(CONF_NAME, "Appliance")
@@ -298,12 +355,13 @@ class OptionsFlowHandler(ConfigSubentryFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
         """Start reconfiguration."""
-        subentry = self._get_reconfigure_subentry()
-        if subentry is None:
+        try:
+            subentry = self._get_reconfigure_subentry()
+        except Exception:  # entered without a valid subentry context
             return self.async_abort(reason="reconfigure_not_supported")
 
         self._data = dict(subentry.data)
-        self._subentry_id = getattr(subentry, "subentry_id", None) or getattr(subentry, "id", None)
+        self._subentry_id = subentry.subentry_id
 
         return await self.async_step_reconfigure_basic(user_input)
 
@@ -314,6 +372,14 @@ class OptionsFlowHandler(ConfigSubentryFlow):
         errors: dict[str, str] = {}
 
         if user_input is not None:
+            # A rename must not collide with another appliance's name.
+            new_name = str(user_input.get(CONF_NAME, "")).strip().lower()
+            if new_name in self._existing_names(exclude_subentry_id=self._subentry_id):
+                return self.async_show_form(
+                    step_id="reconfigure_basic",
+                    data_schema=_appliance_schema({**self._data, **user_input}),
+                    errors={CONF_NAME: "duplicate_name"},
+                )
             self._data.update(user_input)
             # Optional entity fields are omitted from user_input when the user
             # clears them. Drop any that were left empty so they can be removed.
@@ -365,36 +431,26 @@ class OptionsFlowHandler(ConfigSubentryFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
         """Handle removal of an appliance subentry."""
-        if user_input is None:
+        try:
             subentry = self._get_reconfigure_subentry()
-            name = subentry.data.get(CONF_NAME, "this appliance") if subentry else "this appliance"
+        except Exception:  # entered without a valid subentry context
+            return self.async_abort(reason="remove_failed")
 
+        if user_input is None:
+            name = subentry.data.get(CONF_NAME, "this appliance")
             return self.async_show_form(
                 step_id="remove",
                 data_schema=vol.Schema({}),
                 description_placeholders={"name": name},
             )
 
-        # Confirmed removal
+        # Confirmed: actually REMOVE the subentry (updating it to empty data
+        # would leave a ghost appliance with no name behind).
         try:
-            return self.async_update_and_abort(
-                self._get_entry(),
-                self._get_reconfigure_subentry(),
-                data={},
+            self.hass.config_entries.async_remove_subentry(
+                self._get_entry(), subentry.subentry_id
             )
-        except (AttributeError, TypeError):
-            _LOGGER.warning("async_update_and_abort failed for removal, using direct method")
-            try:
-                entry = self.hass.config_entries.async_get_entry(self.handler)
-                subentry = self._get_reconfigure_subentry()
-                if entry and subentry:
-                    subentry_id = getattr(subentry, "subentry_id", None) or getattr(subentry, "id", None)
-                    if subentry_id:
-                        await self.hass.config_entries.async_remove_subentry(
-                            entry.entry_id, subentry_id
-                        )
-                        return self.async_abort(reason="subentry_removed")
-            except Exception as err:
-                _LOGGER.exception("Failed to remove subentry: %s", err)
-
+            return self.async_abort(reason="subentry_removed")
+        except Exception as err:
+            _LOGGER.exception("Failed to remove subentry: %s", err)
         return self.async_abort(reason="remove_failed")

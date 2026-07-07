@@ -19,7 +19,14 @@ class ApplianceInput:
 
     All sensor reads and the persisted runtime mode are resolved by the shell up
     front so the core never touches Home Assistant.
+
+    ``uid`` is the stable identifier (the config subentry id) used to key the
+    runtime ``ApplianceState`` between cycles; ``name`` is the user-editable
+    display name used in logs and commands. Keying state by ``uid`` means a
+    rename doesn't reset hysteresis/averaging state and two appliances that
+    happen to share a name can't corrupt each other's state.
     """
+    uid: str
     name: str
     priority: int
     min_amps: int
@@ -84,8 +91,12 @@ class BatteryStatus:
 
 @dataclass
 class SetFixedAmps:
-    """Command: write ``value`` amps to the appliance's fixed_amps entity."""
-    name: str
+    """Command: write ``value`` amps to the appliance's fixed_amps entity.
+
+    ``uid`` is the appliance's stable id (config subentry id), so the command
+    targets the right appliance even when display names collide.
+    """
+    uid: str
     value: float
 
 
@@ -102,7 +113,7 @@ class FixedAmpsDecision:
 
 @dataclass
 class OptimizeResult:
-    """Result of a normal optimize cycle."""
+    """Result of a normal optimize cycle. ``active`` holds appliance uids."""
     active: list[str]
     decided_amps: float
     fixed_amps_commands: list[SetFixedAmps]
@@ -110,7 +121,7 @@ class OptimizeResult:
 
 @dataclass
 class ShedResult:
-    """Result of a critical-demand shed cycle."""
+    """Result of a critical-demand shed cycle. ``kept`` holds appliance uids."""
     kept: list[str]
     kept_amps: float
     fixed_amps_commands: list[SetFixedAmps]

@@ -15,7 +15,10 @@
           "demand_month_max_sensor": "Monthly peak demand sensor",
           "minimal_peak_warning": "Minimum peak warning (kW)",
           "peak_high_safety": "High safety margin (kW)",
-          "peak_critical_safety": "Critical safety margin (kW)"
+          "peak_critical_safety": "Critical safety margin (kW)",
+          "cost_peak": "Peak import price entity (€/kWh)",
+          "cost_offpeak": "Off-peak import price entity (€/kWh)",
+          "gain_export": "Export compensation entity (€/kWh)"
         },
         "data_description": {
           "solar_production_sensor": "Sensor reporting solar production in watts (required).",
@@ -28,7 +31,10 @@
           "demand_month_max_sensor": "Sensor reporting the highest quarter-hour demand recorded this month. Required for the quarterly-demand sensors.",
           "minimal_peak_warning": "Floor for the monthly peak in kW (e.g. 4). The limits never drop below this.",
           "peak_high_safety": "kW subtracted from the monthly peak to set the High limit (e.g. 0.4).",
-          "peak_critical_safety": "kW subtracted from the monthly peak to set the Critical limit (e.g. 0.2)."
+          "peak_critical_safety": "kW subtracted from the monthly peak to set the Critical limit (e.g. 0.2).",
+          "cost_peak": "Sensor or number entity with the price you pay per kWh imported during peak hours. Leave empty to use the default (0.40 €/kWh).",
+          "cost_offpeak": "Sensor or number entity with the price you pay per kWh imported during off-peak hours. Leave empty to use the default (0.20 €/kWh).",
+          "gain_export": "Sensor or number entity with what you receive per kWh exported; leave empty for the default (0.10 €/kWh). Read every cycle, so dynamic tariffs work. These three prices drive the off_peak-mode breakeven decision."
         }
       }
     },
@@ -52,7 +58,10 @@
           "demand_month_max_sensor": "Monthly peak demand sensor",
           "minimal_peak_warning": "Minimum peak warning (kW)",
           "peak_high_safety": "High safety margin (kW)",
-          "peak_critical_safety": "Critical safety margin (kW)"
+          "peak_critical_safety": "Critical safety margin (kW)",
+          "cost_peak": "Peak import price entity (€/kWh)",
+          "cost_offpeak": "Off-peak import price entity (€/kWh)",
+          "gain_export": "Export compensation entity (€/kWh)"
         },
         "data_description": {
           "solar_production_sensor": "Sensor reporting solar production in watts (required).",
@@ -65,7 +74,10 @@
           "demand_month_max_sensor": "Sensor reporting the highest quarter-hour demand recorded this month. Required for the quarterly-demand sensors.",
           "minimal_peak_warning": "Floor for the monthly peak in kW (e.g. 4). The limits never drop below this.",
           "peak_high_safety": "kW subtracted from the monthly peak to set the High limit (e.g. 0.4).",
-          "peak_critical_safety": "kW subtracted from the monthly peak to set the Critical limit (e.g. 0.2)."
+          "peak_critical_safety": "kW subtracted from the monthly peak to set the Critical limit (e.g. 0.2).",
+          "cost_peak": "Sensor or number entity with the price you pay per kWh imported during peak hours. Leave empty to use the default (0.40 €/kWh).",
+          "cost_offpeak": "Sensor or number entity with the price you pay per kWh imported during off-peak hours. Leave empty to use the default (0.20 €/kWh).",
+          "gain_export": "Sensor or number entity with what you receive per kWh exported; leave empty for the default (0.10 €/kWh). Read every cycle, so dynamic tariffs work. These three prices drive the off_peak-mode breakeven decision."
         }
       }
     }
@@ -167,6 +179,9 @@
           "description": "Remove {name}?"
         }
       },
+      "error": {
+        "duplicate_name": "An appliance with this name already exists."
+      },
       "abort": {
         "reconfigure_successful": "Appliance updated.",
         "reconfigure_not_supported": "Reconfiguration is not supported.",
@@ -180,11 +195,17 @@
       "status": {
         "name": "Status"
       },
-      "managed_consumption": {
-        "name": "Managed Consumption"
+      "managed_consumption_amps": {
+        "name": "Managed Consumption Amps"
+      },
+      "managed_consumption_power": {
+        "name": "Managed Consumption Power"
       },
       "spare_amps": {
         "name": "Spare Amps"
+      },
+      "spare_kw": {
+        "name": "Spare Power"
       },
       "quarterly_demand_estimate": {
         "name": "Quarterly Demand Estimate"

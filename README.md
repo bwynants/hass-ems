@@ -19,17 +19,17 @@ A Home Assistant custom integration (**EMS**) that automatically manages househo
 
 ## Requirements
 
-- Home Assistant 2024.6.0 or later.
+- Home Assistant 2025.3.0 or later (config subentries).
 - A sensor entity providing **solar production** in Watts (required).
-- Optional: house load sensor, net grid power sensor (import positive / export negative), battery SoC sensor, off-peak sensor.
+- Optional: house load sensor, net grid power sensor (import positive / export negative), battery SoC sensor, peak-tariff sensor (`on` during peak hours).
 
 ---
 
 ## Installation
 
-1. Copy the `solar_appliance_manager` folder into your `custom_components` directory:
+1. Copy the `energy_management_system` folder into your `custom_components` directory (the folder name must match the integration domain):
    ```
-   config/custom_components/solar_appliance_manager/
+   config/custom_components/energy_management_system/
    ```
 2. Restart Home Assistant.
 3. Go to **Settings → Devices & Services → Add Integration** and search for **Energy Management System**.
@@ -45,7 +45,7 @@ A Home Assistant custom integration (**EMS**) that automatically manages househo
 | `solar_production_sensor` | ✅ | Entity ID of your solar production sensor (W) |
 | `house_load_sensor` | ❌ | Entity ID of your house load sensor (W) |
 | `grid_export_sensor` | ❌ | Entity ID of your net grid power sensor (W), **import positive / export negative**. The exported (negative) part is used as the surplus budget |
-| `off_peak_sensor` | ❌ | Binary sensor — `on` during off-peak hours |
+| `peak_tariff_sensor` | ❌ | Binary sensor — `on` during **peak**-tariff hours (off ⇒ off-peak). When unset or unavailable, EMS assumes peak (the conservative direction) |
 | `voltage` | ❌ | Grid voltage in Volts (default: `230`) |
 | `demand_power_current_peak_sensor` | ❌ | Sensor with the running average power over the current 15-min quarter (kW/W). Enables the quarterly-demand feature |
 | `demand_power_consumed_sensor` | ❌ | Current power-consumption sensor, used to project demand to the quarter's end |
@@ -53,17 +53,22 @@ A Home Assistant custom integration (**EMS**) that automatically manages househo
 | `minimal_peak_warning` | ❌ | Floor for the monthly peak, kW (default: `4`) — limits never drop below this |
 | `peak_high_safety` | ❌ | kW below the monthly peak for the **High** limit (default: `0.4`) |
 | `peak_critical_safety` | ❌ | kW below the monthly peak for the **Critical** limit (default: `0.2`) |
+| `cost_peak` | ❌ | Sensor/number entity with the import price during peak hours, €/kWh (unset: `0.40`) |
+| `cost_offpeak` | ❌ | Sensor/number entity with the import price during off-peak hours, €/kWh (unset: `0.20`) |
+| `gain_export` | ❌ | Sensor/number entity with the compensation per exported kWh, €/kWh (unset: `0.10`). Read every cycle (dynamic tariffs work); the three prices drive the `off_peak`-mode breakeven decision during peak hours |
 
 > **Battery protection** is configured per-appliance, not globally. Add an appliance and flag it as a battery (`is_battery`); it then supplies the SoC sensor, threshold (`min_soc`) and protection mode used to block the other appliances. See *Adding Appliances* below.
 
 > **Quarterly demand (capacity tariff).** When the three demand source sensors are set, EMS exposes native entities for the Belgian *capaciteitstarief*: `Quarterly Demand Estimate`, `Quarterly Demand Month Max`, `Quarterly Demand High Limit`, `Quarterly Demand Critical Limit`, `Max Power To Peak Limit`, and binary sensors `Quarterly Demand High` / `Quarterly Demand Critical`. They refresh every ~10 s. Peak-aware control is **always on** (it simply has no effect until the demand sensors are configured): the optimizer uses `Max Power To Peak Limit` to **progressively lower** each appliance's `fixed_amps` setpoint (and turn it off when even the minimum won't fit) so demand stays under the **High** limit — preventing the peak — and force-stops all managed appliances as a backstop if demand still reaches **Critical**. Threshold values are entered as plain numbers (no `input_number` helper needed).
 
-Excess power (amps) is calculated from the net grid power when a grid sensor is set
-(export, i.e. negative, becomes surplus; while importing it is clamped to 0),
-otherwise from the solar − house-load estimate:
+Excess power (amps) is calculated from the net grid power when a grid sensor is set,
+otherwise from the solar − house-load estimate. The value is **signed**: exporting
+gives a positive surplus, importing a negative one (it is deliberately *not*
+clamped to 0 — the sign is needed so the managed add-back reconstructs the true
+gross surplus):
 ```
-excess_amps = -grid_power_W / voltage      (when grid_power_W < 0, else 0)
-            = (solar_W - house_load_W) / voltage   (fallback, no grid sensor)
+excess_amps = -grid_power_W / voltage                  (grid sensor; signed)
+            = (solar_W - house_load_W) / voltage       (fallback, no grid sensor)
 ```
 The current draw of managed appliances is then added back so allocation works from
 the gross surplus.
@@ -78,7 +83,7 @@ After setup, open the EMS **Options** to add appliances one at a time.
 | `entity_id` | ✅ | Switch entity to control |
 | `priority` | ❌ | Lower number = higher priority (default: `100`) |
 | `min_amps` | ✅ | Minimum amps needed to run (default: `6`) |
-| `max_amps` | ✅ | Maximum amps the appliance draws (default: `32`) |
+| `max_amps` | ✅ | Maximum amps the appliance draws (default: `16`, configurable 1–20) |
 | `fixed_amps` | ❌ | Number entity; optimizer dynamically sets this entity based on available excess, scaled between `min_amps` and `max_amps` (e.g., `input_number.my_amps`) |
 | `fixed_amps_hysteresis_seconds` | ❌ | Minimum seconds the `fixed_amps` setpoint is held before it may change to another value, preventing it from switching too often (default: `120`) |
 | `power_sensor` | ❌ | Sensor (W) reporting the appliance's real power draw; when set, the optimizer deducts measured consumption from the budget instead of estimating. Falls back to `fixed_amps` setpoint, then `min_amps` |
@@ -118,11 +123,16 @@ For each configured appliance EMS creates:
 |---|---|---|
 | `select.<name>_mode` | Select | Runtime mode selector (`partial_solar` / `forced` / `full_solar` / `off_peak` / `unmanaged`) |
 
-A single EMS-wide status sensor is also created:
+These EMS-wide entities are always created:
 
 | Entity | Type | Description |
 |---|---|---|
-| `sensor.solar_appliance_manager_status` | Sensor | Number of currently active appliances; attributes include `excess_amps`, `soc`, `active_appliances`, `demand_high`, `demand_critical` |
+| `sensor.energy_management_system_status` | Sensor | Number of currently active appliances; attributes include `excess_amps`, `soc`, `active_appliances`, `auto_switching`, `demand_high`, `demand_critical` |
+| `Managed Consumption` | Sensor (A) | Amps the managed appliances are currently drawing |
+| `Managed Consumption Power` | Sensor (kW) | The same managed draw, in kilowatts |
+| `Spare Amps` | Sensor (A) | Gross surplus budget (signed) the optimizer allocates from |
+| `Spare Power` | Sensor (kW) | The same surplus budget, in kilowatts |
+| `Auto switching` | Switch | Master enable for automatic appliance control |
 
 When the quarterly-demand sources are configured, these EMS-wide entities are also created (all kW):
 

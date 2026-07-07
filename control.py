@@ -21,6 +21,7 @@ from .const import (
     CONF_IGNORE_BATTERY_PROTECTION, CONF_SOC_HYSTERESIS_PERCENT, CONF_IS_BATTERY,
     CONF_BATTERY_SOC_SENSOR, CONF_MIN_SOC, CONF_BATTERY_PROTECTION_MODE,
     CONF_RUNTIME_MODE, CONF_RUNTIME_MODES,
+    CONF_COST_PEAK, CONF_COST_OFFPEAK, CONF_GAIN_EXPORT,
     DEFAULT_MIN_AMPS, DEFAULT_MAX_AMPS, DEFAULT_PRIORITY, DEFAULT_HYSTERESIS,
     DEFAULT_AVERAGING, DEFAULT_SOC_HYSTERESIS, DEFAULT_IGNORE_PROTECTION,
     DEFAULT_FIXED_AMPS_HYSTERESIS_SECONDS, DEFAULT_PARTIAL_MIN_EXCESS,
@@ -28,7 +29,7 @@ from .const import (
     DEFAULT_COST_PEAK, DEFAULT_COST_OFFPEAK, DEFAULT_GAIN_EXPORT,
     MODE_UNMANAGED,
 )
-from .helpers import read_sensor, read_sensor_optional, UNAVAILABLE_STATES
+from .helpers import read_sensor, read_sensor_optional, read_binary, read_value, UNAVAILABLE_STATES
 from .ems_core import ApplianceInput, EnergyInput
 
 _LOGGER = logging.getLogger(__name__)
@@ -36,27 +37,29 @@ _LOGGER = logging.getLogger(__name__)
 
 def _resolve_mode(coordinator, app: dict) -> str:
     """Resolve an appliance's persisted runtime mode (or the default)."""
-    appliance_id = app.get("subentry_id") or app.get("id")
-    if not appliance_id:
-        _LOGGER.warning("Appliance %s has no subentry_id; using default mode", app.get(CONF_NAME))
-        return DEFAULT_MODE
     return coordinator.get_appliance_persistent_setting(
-        appliance_id, CONF_RUNTIME_MODE, CONF_RUNTIME_MODES, DEFAULT_MODE,
+        app["subentry_id"], CONF_RUNTIME_MODE, CONF_RUNTIME_MODES, DEFAULT_MODE,
     )
 
 
-def _is_on(hass, entity_id: str | None) -> bool:
-    if not entity_id:
-        return False
-    state = hass.states.get(entity_id)
-    return state is not None and state.state == STATE_ON
+def _is_on(hass, entity_id: str | None, assumed_on: bool) -> bool:
+    """The controlled entity's on state.
+
+    When the entity is momentarily unavailable, fall back to ``assumed_on``
+    (our own last decision): a running appliance whose switch drops out must
+    keep counting toward the managed add-back and stay eligible for
+    critical-shed throttling instead of silently vanishing from the budget.
+    """
+    return read_binary(hass, entity_id, missing=False, unavailable=assumed_on)
 
 
 def _is_connected(hass, entity_id: str | None) -> bool:
-    if not entity_id:
-        return True
-    state = hass.states.get(entity_id)
-    return bool(state and state.state == "on")
+    """Connected unless the sensor explicitly reports off.
+
+    An unavailable sensor is treated as connected: a momentary dropout must not
+    force-skip (and thus power-cycle) a running appliance with no hysteresis.
+    """
+    return read_binary(hass, entity_id, missing=True, unavailable=True)
 
 
 def _measured_amps(hass, entity_id: str | None, voltage: float) -> float | None:
@@ -70,38 +73,48 @@ def _measured_amps(hass, entity_id: str | None, voltage: float) -> float | None:
 
 def build_energy_input(hass, config: dict, voltage: float) -> EnergyInput:
     """Read the grid/solar snapshot and tariff context into an EnergyInput."""
-    peak_entity = config.get(CONF_PEAK_TARIFF_SENSOR)
-    if not peak_entity:
-        is_peak = True  # no sensor ⇒ assume peak (off_peak False), as before
-    else:
-        st = hass.states.get(peak_entity)
-        is_peak = bool(st and st.state == "on")
+    # No sensor OR an unavailable sensor ⇒ assume peak (the conservative
+    # direction: off_peak-mode appliances stay breakeven-gated).
+    is_peak = read_binary(
+        hass, config.get(CONF_PEAK_TARIFF_SENSOR), missing=True, unavailable=True
+    )
     return EnergyInput(
         grid_w=read_sensor_optional(hass, config.get(CONF_GRID_EXPORT)),
         solar_w=read_sensor(hass, config.get(CONF_SOLAR_PRODUCTION)),
         house_load_w=read_sensor(hass, config.get(CONF_HOUSE_LOAD)),
         voltage=voltage,
         off_peak=not is_peak,
-        cost_peak=config.get("cost_peak", DEFAULT_COST_PEAK),
-        cost_offpeak=config.get("cost_offpeak", DEFAULT_COST_OFFPEAK),
-        gain_export=config.get("gain_export", DEFAULT_GAIN_EXPORT),
+        # Prices come from selectable sensor/number entities (read fresh each
+        # cycle, so dynamic tariffs work); legacy plain numbers still resolve.
+        cost_peak=read_value(hass, config.get(CONF_COST_PEAK), DEFAULT_COST_PEAK),
+        cost_offpeak=read_value(hass, config.get(CONF_COST_OFFPEAK), DEFAULT_COST_OFFPEAK),
+        gain_export=read_value(hass, config.get(CONF_GAIN_EXPORT), DEFAULT_GAIN_EXPORT),
     )
 
 
 def build_appliance_inputs(hass, appliances, coordinator, voltage: float):
     """Resolve each appliance's sensors/config/mode into ApplianceInput objects.
 
-    Returns ``(inputs, raw_by_name)`` where ``raw_by_name`` maps the appliance
-    name to its raw config dict (used later to apply commands to real entities).
+    Returns ``(inputs, raw_by_uid)`` where ``raw_by_uid`` maps the appliance's
+    stable uid (config subentry id) to its raw config dict (used later to apply
+    commands to real entities).
     """
     inputs: list[ApplianceInput] = []
-    raw_by_name: dict[str, dict] = {}
+    raw_by_uid: dict[str, dict] = {}
     for app in appliances:
         name = app[CONF_NAME]
+        uid = app["subentry_id"]
         is_battery = app.get(CONF_IS_BATTERY, False)
         fixed_entity = app.get(CONF_FIXED_AMPS)
+        # Our own last on/off decision — the fallback for an unavailable
+        # controlled entity.
+        runtime = coordinator.appliance_states.get(uid)
+        assumed_on = bool(runtime.is_on) if runtime else False
         inputs.append(
             ApplianceInput(
+                # Stable id keying the runtime state: the config subentry id,
+                # so a rename doesn't reset the appliance's runtime state.
+                uid=uid,
                 name=name,
                 priority=app.get(CONF_PRIORITY, DEFAULT_PRIORITY),
                 min_amps=app.get(CONF_MIN_AMPS, DEFAULT_MIN_AMPS),
@@ -116,7 +129,7 @@ def build_appliance_inputs(hass, appliances, coordinator, voltage: float):
                 hysteresis_seconds=app.get(CONF_HYSTERESIS_ON_OFF_SECONDS, DEFAULT_HYSTERESIS),
                 averaging_window_seconds=app.get(CONF_AVERAGING_WINDOW, DEFAULT_AVERAGING),
                 connected=_is_connected(hass, app.get(CONF_CONNECTED_SENSOR)),
-                entity_on=_is_on(hass, app.get(CONF_ENTITY_ID)),
+                entity_on=_is_on(hass, app.get(CONF_ENTITY_ID), assumed_on),
                 measured_amps=_measured_amps(hass, app.get(CONF_POWER_SENSOR), voltage),
                 is_battery=is_battery,
                 ignore_battery_protection=app.get(
@@ -129,8 +142,8 @@ def build_appliance_inputs(hass, appliances, coordinator, voltage: float):
                 battery_protection_mode=app.get(CONF_BATTERY_PROTECTION_MODE, DEFAULT_BATTERY_MODE) if is_battery else None,
             )
         )
-        raw_by_name[name] = app
-    return inputs, raw_by_name
+        raw_by_uid[uid] = app
+    return inputs, raw_by_uid
 
 
 async def _write_fixed_amps(hass, entity_id: str, value: float, name: str) -> None:
@@ -147,24 +160,25 @@ async def _write_fixed_amps(hass, entity_id: str, value: float, name: str) -> No
         _LOGGER.warning("Failed to update fixed_amps entity %s: %s", entity_id, err)
 
 
-async def apply_commands(hass, active, fixed_amps_commands, inputs, raw_by_name) -> None:
+async def apply_commands(hass, active, fixed_amps_commands, inputs, raw_by_uid) -> None:
     """Apply the core's decisions to Home Assistant.
 
-    Writes the fixed_amps setpoints, then switches managed appliances on/off to
-    match ``active`` (skipping unmanaged / missing / unavailable entities).
+    ``active`` and the commands are keyed by appliance uid (config subentry id),
+    so duplicate display names can't misdirect a command. Writes the fixed_amps
+    setpoints, then switches managed appliances on/off to match ``active``
+    (skipping unmanaged / missing / unavailable entities).
     """
     for cmd in fixed_amps_commands:
-        raw = raw_by_name.get(cmd.name)
+        raw = raw_by_uid.get(cmd.uid)
         entity_id = raw.get(CONF_FIXED_AMPS) if raw else None
         if entity_id:
-            await _write_fixed_amps(hass, entity_id, cmd.value, cmd.name)
+            await _write_fixed_amps(hass, entity_id, cmd.value, raw.get(CONF_NAME, cmd.uid))
 
     active_set = set(active)
-    _LOGGER.debug("apply states: active=%s", active_set)
     for app in inputs:
         if app.mode == MODE_UNMANAGED:
             continue
-        raw = raw_by_name.get(app.name)
+        raw = raw_by_uid.get(app.uid)
         entity_id = raw.get(CONF_ENTITY_ID) if raw else None
         if not entity_id:
             continue
@@ -173,13 +187,18 @@ async def apply_commands(hass, active, fixed_amps_commands, inputs, raw_by_name)
             _LOGGER.debug("apply states: %s unavailable, skipped", entity_id)
             continue
 
-        should_be_on = app.name in active_set
+        should_be_on = app.uid in active_set
         domain = split_entity_id(entity_id)[0]
         currently_on = state.state == STATE_ON
 
-        if should_be_on and not currently_on:
-            _LOGGER.info("turning ON %s (%s)", entity_id, app.name)
-            await hass.services.async_call(domain, "turn_on", {"entity_id": entity_id}, blocking=True)
-        elif not should_be_on and currently_on:
-            _LOGGER.info("turning OFF %s (%s)", entity_id, app.name)
-            await hass.services.async_call(domain, "turn_off", {"entity_id": entity_id}, blocking=True)
+        # One failing device must not abort the loop — the remaining
+        # appliances (e.g. the rest of a critical shed) still get commanded.
+        try:
+            if should_be_on and not currently_on:
+                _LOGGER.info("turning ON %s (%s)", entity_id, app.name)
+                await hass.services.async_call(domain, "turn_on", {"entity_id": entity_id}, blocking=True)
+            elif not should_be_on and currently_on:
+                _LOGGER.info("turning OFF %s (%s)", entity_id, app.name)
+                await hass.services.async_call(domain, "turn_off", {"entity_id": entity_id}, blocking=True)
+        except Exception as err:
+            _LOGGER.warning("Failed to switch %s (%s): %s", entity_id, app.name, err)

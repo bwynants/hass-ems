@@ -15,7 +15,10 @@
           "demand_month_max_sensor": "Sensor maandelijkse piekafname",
           "minimal_peak_warning": "Minimale piekwaarschuwing (kW)",
           "peak_high_safety": "Hoge veiligheidsmarge (kW)",
-          "peak_critical_safety": "Kritieke veiligheidsmarge (kW)"
+          "peak_critical_safety": "Kritieke veiligheidsmarge (kW)",
+          "cost_peak": "Entiteit prijs afname piektarief (€/kWh)",
+          "cost_offpeak": "Entiteit prijs afname daltarief (€/kWh)",
+          "gain_export": "Entiteit injectievergoeding (€/kWh)"
         },
         "data_description": {
           "solar_production_sensor": "Sensor die de zonneproductie in watt rapporteert (verplicht).",
@@ -28,7 +31,10 @@
           "demand_month_max_sensor": "Sensor met de hoogste kwartierafname van deze maand. Vereist voor de kwartiervermogen-sensoren.",
           "minimal_peak_warning": "Ondergrens voor de maandpiek in kW (bv. 4). De limieten dalen nooit hieronder.",
           "peak_high_safety": "kW afgetrokken van de maandpiek voor de Hoge limiet (bv. 0,4).",
-          "peak_critical_safety": "kW afgetrokken van de maandpiek voor de Kritieke limiet (bv. 0,2)."
+          "peak_critical_safety": "kW afgetrokken van de maandpiek voor de Kritieke limiet (bv. 0,2).",
+          "cost_peak": "Sensor- of getalentiteit met de prijs per kWh afgenomen tijdens piekuren. Leeg laten voor de standaardwaarde (0,40 €/kWh).",
+          "cost_offpeak": "Sensor- of getalentiteit met de prijs per kWh afgenomen tijdens daluren. Leeg laten voor de standaardwaarde (0,20 €/kWh).",
+          "gain_export": "Sensor- of getalentiteit met de vergoeding per geïnjecteerde kWh; leeg laten voor de standaardwaarde (0,10 €/kWh). Elke cyclus opnieuw gelezen, dus dynamische tarieven werken. Deze drie prijzen sturen de breakeven-beslissing van de off_peak-modus."
         }
       }
     },
@@ -52,7 +58,10 @@
           "demand_month_max_sensor": "Sensor maandelijkse piekafname",
           "minimal_peak_warning": "Minimale piekwaarschuwing (kW)",
           "peak_high_safety": "Hoge veiligheidsmarge (kW)",
-          "peak_critical_safety": "Kritieke veiligheidsmarge (kW)"
+          "peak_critical_safety": "Kritieke veiligheidsmarge (kW)",
+          "cost_peak": "Entiteit prijs afname piektarief (€/kWh)",
+          "cost_offpeak": "Entiteit prijs afname daltarief (€/kWh)",
+          "gain_export": "Entiteit injectievergoeding (€/kWh)"
         },
         "data_description": {
           "solar_production_sensor": "Sensor die de zonneproductie in watt rapporteert (verplicht).",
@@ -65,7 +74,10 @@
           "demand_month_max_sensor": "Sensor met de hoogste kwartierafname van deze maand. Vereist voor de kwartiervermogen-sensoren.",
           "minimal_peak_warning": "Ondergrens voor de maandpiek in kW (bv. 4). De limieten dalen nooit hieronder.",
           "peak_high_safety": "kW afgetrokken van de maandpiek voor de Hoge limiet (bv. 0,4).",
-          "peak_critical_safety": "kW afgetrokken van de maandpiek voor de Kritieke limiet (bv. 0,2)."
+          "peak_critical_safety": "kW afgetrokken van de maandpiek voor de Kritieke limiet (bv. 0,2).",
+          "cost_peak": "Sensor- of getalentiteit met de prijs per kWh afgenomen tijdens piekuren. Leeg laten voor de standaardwaarde (0,40 €/kWh).",
+          "cost_offpeak": "Sensor- of getalentiteit met de prijs per kWh afgenomen tijdens daluren. Leeg laten voor de standaardwaarde (0,20 €/kWh).",
+          "gain_export": "Sensor- of getalentiteit met de vergoeding per geïnjecteerde kWh; leeg laten voor de standaardwaarde (0,10 €/kWh). Elke cyclus opnieuw gelezen, dus dynamische tarieven werken. Deze drie prijzen sturen de breakeven-beslissing van de off_peak-modus."
         }
       }
     }
@@ -167,6 +179,9 @@
           "description": "{name} verwijderen?"
         }
       },
+      "error": {
+        "duplicate_name": "Er bestaat al een apparaat met deze naam."
+      },
       "abort": {
         "reconfigure_successful": "Apparaat bijgewerkt.",
         "reconfigure_not_supported": "Herconfiguratie wordt niet ondersteund.",
@@ -180,11 +195,17 @@
       "status": {
         "name": "Status"
       },
-      "managed_consumption": {
-        "name": "Beheerd verbruik"
+      "managed_consumption_amps": {
+        "name": "Beheerd Ampere"
+      },
+      "managed_consumption_power": {
+        "name": "Beheerd vermogen"
       },
       "spare_amps": {
         "name": "Beschikbare stroom"
+      },
+      "spare_kw": {
+        "name": "Beschikbaar vermogen"
       },
       "quarterly_demand_estimate": {
         "name": "Geschat kwartiervermogen"

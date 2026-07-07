@@ -47,11 +47,16 @@ def scaled_amps(min_a: float, max_a: float, remaining_amps: float) -> float:
 
 
 def breakeven(min_amps, cost_peak, cost_offpeak, gain_export):
-    """Averaged excess (amps) above which running at peak beats waiting for off-peak."""
+    """Averaged excess (amps) above which running at peak beats waiting for off-peak.
+
+    Fails CLOSED on a degenerate or negative denominator (export gain at or
+    above the peak cost): running at peak can then never beat waiting, so the
+    threshold saturates to infinity instead of 0 ("always run").
+    """
     denom = cost_peak - gain_export
-    if abs(denom) > 0.001:
+    if denom > 0.001:
         return min_amps * (cost_peak - cost_offpeak) / denom
-    return 0
+    return float("inf")
 
 
 def actual_amps(app: ApplianceInput) -> float:

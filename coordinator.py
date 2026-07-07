@@ -32,19 +32,19 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry):
         super().__init__(hass, _LOGGER, name=DOMAIN, config_entry=entry, update_interval=timedelta(seconds=CONTROLLER_UPDATE_INTERVAL))
         self.entry = entry
-        # name -> ems_core.ApplianceState
+        # appliance uid (config subentry id) -> ems_core.ApplianceState
         self.appliance_states: dict[str, ems_core.ApplianceState] = {}
         self._enabled = entry.options.get(CONF_AUTO_SWITCHING, DEFAULT_AUTO_SWITCHING)
-        self._last_excess = 0.0
         self._last_soc = None
-        self._battery_min_soc = None
-        self._battery_protection_mode = None
         # Set by __init__.py after construction; the fast quarter-hour demand
         # coordinator, read here for peak-aware control.
         self.demand_coordinator = None
-        # When True, the next config-entry update listener call skips the full
-        # reload (used for live per-appliance / auto-switching setting changes).
-        self.suppress_reload = False
+        # Number of pending update-listener calls to skip (live per-appliance /
+        # auto-switching setting changes applied without a full reload). A
+        # counter, not a flag: it is only incremented when the update actually
+        # changed something (a no-op update fires no listener and would leave a
+        # flag latched), and rapid consecutive changes each consume one.
+        self.suppress_reloads = 0
 
     @property
     def enabled(self) -> bool:
@@ -60,9 +60,11 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
         self._enabled = value
         options = dict(self.entry.options)
         options[CONF_AUTO_SWITCHING] = value
-        # Applied live below; don't let the update listener reload the entry.
-        self.suppress_reload = True
-        self.hass.config_entries.async_update_entry(self.entry, options=options)
+        # Applied live below; skip the reload the update listener would do.
+        # Only count it when the update actually changed something — a no-op
+        # update fires no listener.
+        if self.hass.config_entries.async_update_entry(self.entry, options=options):
+            self.suppress_reloads += 1
         await self.async_refresh()
         _LOGGER.info("Auto switching set to %s", value)
 
@@ -140,18 +142,18 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
             title = title or getattr(subentry, "title", None) or self.entry.data.get(CONF_NAME)
             # Applied live via async_refresh below; a per-appliance setting change
             # (mode/enabled) doesn't need a full reload, which would reset state
-            # and briefly disturb control. Tell the update listener to skip it.
-            self.suppress_reload = True
-            self.hass.config_entries.async_update_subentry(
+            # and briefly disturb control. Only count the skip when the update
+            # actually changed something (a no-op fires no listener).
+            if self.hass.config_entries.async_update_subentry(
                 self.entry,
                 subentry,
                 data=new_data,
                 title=title,
-            )
+            ):
+                self.suppress_reloads += 1
             await self.async_refresh()
             return True
         except Exception as err:
-            self.suppress_reload = False
             _LOGGER.exception("Failed to persist %s for appliance %s: %s", key, appliance_id, err)
             return False
 
@@ -191,21 +193,26 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
         )
 
         voltage = self._read_sensor(config.get(CONF_VOLTAGE), default=DEFAULT_VOLTAGE)
-        inputs, raw_by_name = control.build_appliance_inputs(
+        inputs, raw_by_uid = control.build_appliance_inputs(
             self.hass, appliances, self, voltage
         )
         energy = control.build_energy_input(self.hass, config, voltage)
         now = dt_util.utcnow()
+        # The core keys everything by appliance uid; map back to display names
+        # for the user-facing data and logs.
+        names_by_uid = {i.uid: i.name for i in inputs}
+
+        def _kw(amps: float) -> float:
+            """Amps → kW at this cycle's voltage (for the *_kw sensor values)."""
+            return round(amps * voltage / 1000.0, 2)
 
         # SoC / protection threshold, derived from the battery appliances.
         battery = ems_core.battery_status(inputs)
         self._last_soc = battery.soc
-        self._battery_min_soc = battery.min_soc
-        self._battery_protection_mode = battery.protection_mode
-        if self._last_soc is not None or self._battery_min_soc is not None:
+        if battery.soc is not None or battery.min_soc is not None:
             _LOGGER.debug(
                 "battery: soc=%s, min_soc=%s, protection=%s",
-                self._last_soc, self._battery_min_soc, self._battery_protection_mode,
+                battery.soc, battery.min_soc, battery.protection_mode,
             )
 
         # Amps the managed appliances are currently drawing (added back below).
@@ -220,6 +227,21 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
                 demand.get("high"), demand.get("critical"), demand.get("max_power_to_peak"),
             )
 
+        # Total surplus = grid surplus + managed draw added back (gross surplus).
+        grid_surplus = ems_core.calculate_excess_amps(
+            energy.grid_w, energy.solar_w, energy.house_load_w, voltage
+        )
+        excess_amps = grid_surplus + managed_amps
+        _LOGGER.debug(
+            "budget: excess=%.2f A (grid surplus %.2f A + managed add-back %.2f A)",
+            excess_amps, grid_surplus, managed_amps,
+        )
+
+        # Roll the excess into the averaging history on EVERY cycle — critical
+        # and disabled ones included — so the rolling average stays continuous
+        # and the first post-critical cycle doesn't act on stale samples.
+        ems_core.record_excess(inputs, self.appliance_states, excess_amps)
+
         # Critical demand: force everything off to protect the monthly peak.
         if self._is_demand_critical():
             if self.enabled:
@@ -228,38 +250,29 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
                 )
                 shed = ems_core.critical_shed(inputs, self.appliance_states, now)
                 await control.apply_commands(
-                    self.hass, shed.kept, shed.fixed_amps_commands, inputs, raw_by_name
+                    self.hass, shed.kept, shed.fixed_amps_commands, inputs, raw_by_uid
                 )
                 kept, kept_amps = shed.kept, shed.kept_amps
             else:
-                kept, kept_amps = [], 0.0
+                # Not intervening: nothing is "kept at min", but the appliances
+                # are still drawing — report the real managed draw, not 0.
+                kept, kept_amps = [], managed_amps
                 _LOGGER.warning("demand CRITICAL (auto-switching off; not intervening)")
+            kept_names = [names_by_uid.get(u, u) for u in kept]
             _LOGGER.debug(
-                "==== EMS cycle end: critical (kept at min: %s) ====", kept or "none"
+                "==== EMS cycle end: critical (kept at min: %s) ====", kept_names or "none"
             )
             return {
                 "excess_amps": 0,
+                "excess_kw": 0,
                 "soc": self._last_soc,
-                "active_appliances": kept,
+                "active_appliances": kept_names,
                 "appliances": appliances,
                 "auto_switching": self.enabled,
                 "demand_critical": True,
                 "managed_amps": round(kept_amps, 2),
+                "managed_power": _kw(kept_amps),
             }
-
-        # Total surplus = grid surplus + managed draw added back (gross surplus).
-        grid_surplus = ems_core.calculate_excess_amps(
-            energy.grid_w, energy.solar_w, energy.house_load_w, voltage
-        )
-        excess_amps = grid_surplus + managed_amps
-        self._last_excess = excess_amps
-        _LOGGER.debug(
-            "budget: excess=%.2f A (grid surplus %.2f A + managed add-back %.2f A)",
-            excess_amps, grid_surplus, managed_amps,
-        )
-
-        # Roll the excess into the averaging history (also on disabled cycles).
-        ems_core.record_excess(inputs, self.appliance_states, excess_amps)
 
         if not self.enabled:
             _LOGGER.debug(
@@ -268,11 +281,13 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
             _LOGGER.debug("==== EMS cycle end: auto-switching off ====")
             return {
                 "excess_amps": round(excess_amps, 2),
+                "excess_kw": _kw(excess_amps),
                 "soc": self._last_soc,
                 "active_appliances": [],
                 "appliances": appliances,
                 "auto_switching": False,
                 "managed_amps": round(managed_amps, 2),
+                "managed_power": _kw(managed_amps),
             }
 
         peak_amps = self._get_peak_amps(voltage)
@@ -284,21 +299,24 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
             inputs, self.appliance_states, excess_amps, peak_amps, energy, battery, now
         )
         await control.apply_commands(
-            self.hass, result.active, result.fixed_amps_commands, inputs, raw_by_name
+            self.hass, result.active, result.fixed_amps_commands, inputs, raw_by_uid
         )
 
+        active_names = [names_by_uid.get(u, u) for u in result.active]
         _LOGGER.debug(
             "result: active=%s | decided draw=%.2f A | spare(excess)=%.2f A",
-            result.active, result.decided_amps, excess_amps,
+            active_names, result.decided_amps, excess_amps,
         )
         _LOGGER.debug("==== EMS cycle end ====")
         return {
             "excess_amps": round(excess_amps, 2),
+            "excess_kw": _kw(excess_amps),
             "soc": self._last_soc,
-            "active_appliances": result.active,
+            "active_appliances": active_names,
             "appliances": appliances,
             "auto_switching": True,
             # Report the draw the optimizer just decided (fresh setpoints), so
             # Managed Consumption updates this cycle instead of lagging one.
             "managed_amps": round(result.decided_amps, 2),
+            "managed_power": _kw(result.decided_amps),
         }

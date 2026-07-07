@@ -1,11 +1,18 @@
 import logging
-from logging.handlers import RotatingFileHandler
+from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
+from queue import SimpleQueue
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from .coordinator import SolarApplianceCoordinator
 from .demand_coordinator import QuarterlyDemandCoordinator
 from .const import DOMAIN, PLATFORMS
+
+# unique_id suffixes of sensors orphaned by past renames:
+# managed_consumption -> managed_consumption_amps,
+# managed_consumption_kw -> managed_consumption_power.
+_STALE_UNIQUE_ID_SUFFIXES = ("managed_consumption", "managed_consumption_kw")
 
 # Dedicated debug log file, written to the HA config dir so it can be read
 # over the (SMB) config share. Self-contained; remove this block to disable.
@@ -15,17 +22,27 @@ _DEBUG_HANDLER_FLAG = "_sam_debug_file_handler"
 
 
 def _setup_debug_file_handler(path: str) -> None:
-    """Attach a rotating file handler to the integration logger (blocking I/O)."""
+    """Attach a queue-backed rotating file handler to the integration logger.
+
+    The logger gets a QueueHandler (a cheap in-memory put per record); the
+    actual file writes and rollovers happen on the QueueListener's own thread,
+    so the event loop never blocks on disk I/O for the debug log.
+    """
     if getattr(_PKG_LOGGER, _DEBUG_HANDLER_FLAG, False):
         return
-    handler = RotatingFileHandler(
+    file_handler = RotatingFileHandler(
         path, maxBytes=2_000_000, backupCount=3, encoding="utf-8"
     )
-    handler.setLevel(logging.DEBUG)
-    handler.setFormatter(
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(
         logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")
     )
-    _PKG_LOGGER.addHandler(handler)
+    queue: SimpleQueue = SimpleQueue()
+    listener = QueueListener(queue, file_handler)
+    listener.start()
+    queue_handler = QueueHandler(queue)
+    queue_handler.setLevel(logging.DEBUG)
+    _PKG_LOGGER.addHandler(queue_handler)
     _PKG_LOGGER.setLevel(logging.DEBUG)
     setattr(_PKG_LOGGER, _DEBUG_HANDLER_FLAG, True)
 
@@ -39,10 +56,35 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
     sets ``suppress_reload`` for those updates so we skip the rebuild.
     """
     coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
-    if coordinator is not None and getattr(coordinator, "suppress_reload", False):
-        coordinator.suppress_reload = False
+    if coordinator is not None and getattr(coordinator, "suppress_reloads", 0) > 0:
+        coordinator.suppress_reloads -= 1
         return
     await hass.config_entries.async_reload(entry.entry_id)
+
+
+def _cleanup_stale_entities(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Remove registry entries orphaned by unique_id renames.
+
+    Without this the old entities linger as unavailable duplicates, and the
+    renamed power sensor keeps a collision-suffixed ``_2`` entity_id.
+    """
+    ent_reg = er.async_get(hass)
+    for suffix in _STALE_UNIQUE_ID_SUFFIXES:
+        unique_id = f"{DOMAIN}_{entry.entry_id}_{suffix}"
+        entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, unique_id)
+        if entity_id:
+            _PKG_LOGGER.info("Removing stale entity %s (unique_id %s)", entity_id, unique_id)
+            ent_reg.async_remove(entity_id)
+
+    # The rename collision left the managed_consumption_power entity with a
+    # `_2`-suffixed entity_id; give it the clean id once the stale one is gone.
+    unique_id = f"{DOMAIN}_{entry.entry_id}_managed_consumption_power"
+    entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, unique_id)
+    if entity_id and entity_id.endswith("_2"):
+        clean_id = entity_id[:-2]
+        if not ent_reg.async_get(clean_id):
+            _PKG_LOGGER.info("Renaming %s -> %s", entity_id, clean_id)
+            ent_reg.async_update_entity(entity_id, new_entity_id=clean_id)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -50,6 +92,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.async_add_executor_job(
         _setup_debug_file_handler, hass.config.path(_DEBUG_LOG_FILENAME)
     )
+
+    # Clean up entities orphaned by past unique_id renames before the
+    # platforms register the current set.
+    _cleanup_stale_entities(hass, entry)
 
     # The fast (~10s) quarter-hour demand coordinator is created first so the
     # main coordinator can read its values for peak-aware control.

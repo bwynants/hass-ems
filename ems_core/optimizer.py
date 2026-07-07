@@ -35,7 +35,7 @@ def record_excess(
     so the rolling average is continuous regardless of whether the optimizer ran.
     """
     for app in appliances:
-        state = states.setdefault(app.name, ApplianceState())
+        state = states.setdefault(app.uid, ApplianceState())
         state.excess_history.append(excess_amps)
 
 
@@ -151,21 +151,29 @@ def _should_run(
         if state.soc_blocked:
             state.soc_blocked = False
             _LOGGER.debug("%s soc_blocked cleared (battery protection ignored)", name)
-    elif battery.soc is not None and battery.min_soc is not None:
-        # Use the per-appliance override only when explicitly set (0 is valid),
-        # otherwise the threshold configured on the battery appliance(s).
-        override = app.min_soc_override
-        min_soc = override if override is not None else battery.min_soc
-        soc_hyst = app.soc_hysteresis_percent
-        # Clamp the clear threshold so it is always reachable (SoC maxes at 100%).
-        clear_at = min(min_soc + soc_hyst, 100)
-        if state.soc_blocked:
-            if battery.soc >= clear_at:
-                state.soc_blocked = False
-                _LOGGER.debug("%s soc_blocked cleared, soc=%s >= %s", name, battery.soc, clear_at)
-        elif battery.soc < min_soc:
-            state.soc_blocked = True
-            _LOGGER.debug("%s soc_blocked set, soc=%s < %s", name, battery.soc, min_soc)
+    elif battery.min_soc is not None:
+        if battery.soc is None:
+            # SoC sensor unavailable: fail safe by HOLDING the existing latch —
+            # a dropout must neither lift an active block (draining the low
+            # battery) nor set a new one on missing data.
+            if state.soc_blocked:
+                _LOGGER.debug("%s soc_blocked held (SoC sensor unavailable)", name)
+        else:
+            # Use the per-appliance override only when explicitly set (0 is
+            # valid), otherwise the threshold configured on the battery
+            # appliance(s).
+            override = app.min_soc_override
+            min_soc = override if override is not None else battery.min_soc
+            soc_hyst = app.soc_hysteresis_percent
+            # Clamp the clear threshold so it is always reachable (SoC maxes at 100%).
+            clear_at = min(min_soc + soc_hyst, 100)
+            if state.soc_blocked:
+                if battery.soc >= clear_at:
+                    state.soc_blocked = False
+                    _LOGGER.debug("%s soc_blocked cleared, soc=%s >= %s", name, battery.soc, clear_at)
+            elif battery.soc < min_soc:
+                state.soc_blocked = True
+                _LOGGER.debug("%s soc_blocked set, soc=%s < %s", name, battery.soc, min_soc)
         if state.soc_blocked:
             if battery.protection_mode == BATTERY_MODE_RELAXED:
                 soc_block_solar_only = True
@@ -175,8 +183,18 @@ def _should_run(
                 return False
 
     if soc_block_solar_only:
+        # Battery low (relaxed): only run while the solar budget covers the
+        # appliance. full_solar keeps its sustained-average requirement too —
+        # the bypass must never be WEAKER than the mode's own gate, or a low
+        # battery would make a full_solar appliance easier to start.
         required_a = app.min_amps
-        condition_met = remaining_amps >= required_a
+        condition_met = remaining_amps >= required_a and (
+            app.mode != MODE_FULL_SOLAR or avg_excess >= required_a
+        )
+        # _basic_condition (the spike flag's only writer) is bypassed here;
+        # re-arm the flag so the one-shot INFO log still fires on the next
+        # genuine transient spike after SoC recovers.
+        state.full_solar_spike = False
     else:
         condition_met = _basic_condition(app, state, avg_excess, remaining_amps, energy)
     _LOGGER.debug("%s condition_met=%s", name, condition_met)
@@ -193,7 +211,7 @@ def _should_run(
     if last_change is not None:
         time_since_change = (now - last_change).total_seconds()
         if time_since_change < hyst_sec:
-            _LOGGER.debug(
+            _LOGGER.info(
                 "%s within hysteresis (%ds); holding state=%s",
                 name, int(time_since_change), state.is_on,
             )
@@ -218,11 +236,12 @@ def optimize(
 
     Mutates ``states`` (hysteresis timers, SoC latch, fixed_amps tracking).
     Call :func:`record_excess` first each cycle to roll the excess into the
-    averaging history. Returns the active list, the draw decided this cycle, and
-    the fixed_amps write commands for the shell to apply.
+    averaging history. Returns the active appliance uids, the draw decided this
+    cycle, and the fixed_amps write commands for the shell to apply.
     """
     sorted_apps = sorted(appliances, key=lambda a: a.priority)
-    active: list[str] = []
+    active: list[str] = []          # appliance uids
+    active_names: list[str] = []    # display names, for the log lines only
     commands: list[SetFixedAmps] = []
     remaining = excess_amps
     decided_amps = 0.0
@@ -248,8 +267,14 @@ def optimize(
         solar_avail = max(remaining, 0.0)
         forced_budget = remaining + peak_remaining if forced_additive else None
 
+        state = states.setdefault(app.uid, ApplianceState())
+
         # Hard peak cap: if the appliance can't reach its minimum from the budget
-        # it may use, it can't run this cycle.
+        # it may use, it can't run this cycle. The off is immediate (protective),
+        # but the state machine is kept consistent: the transition is recorded so
+        # re-activation is damped by the on/off hysteresis (no 10s relay flapping
+        # when headroom hovers around min), and the setpoint tracking is cleared
+        # so it comes back with a fresh write instead of the stale value.
         if peak_remaining is not None:
             reachable = forced_budget if forced_additive else peak_remaining
             if reachable < min_a:
@@ -257,11 +282,15 @@ def optimize(
                     "  - %s (mode=%s): OFF, peak headroom too low (%.1f A available < %d A min)",
                     name, mode, reachable, min_a,
                 )
+                if state.is_on:
+                    state.is_on = False
+                    state.last_change = now
+                state.last_fixed_amps = None
+                state.last_fixed_amps_change = None
                 continue
-
-        state = states.setdefault(name, ApplianceState())
         if _should_run(app, state, remaining, excess_amps, energy, battery, now):
-            active.append(name)
+            active.append(app.uid)
+            active_names.append(name)
 
             if forced_additive:
                 scaled = scaled_amps(min_a, app.max_amps, forced_budget)
@@ -281,12 +310,16 @@ def optimize(
                 if decision.write_value is not None:
                     state.last_fixed_amps = decision.write_value
                     state.last_fixed_amps_change = now
-                    commands.append(SetFixedAmps(name, decision.write_value))
+                    commands.append(SetFixedAmps(app.uid, decision.write_value))
                 commanded = decision.effective
 
-            # Deduct the draw from the budget: measured, else commanded, else min.
+            # Deduct the draw from the budget: measured, else commanded, else
+            # min. The measured value only counts while the appliance is
+            # actually running — on the activation cycle an OFF appliance's
+            # power sensor reads 0.0, which would deduct nothing and let the
+            # same surplus be allocated twice.
             measured = app.measured_amps
-            if measured is not None:
+            if measured is not None and app.entity_on:
                 used = measured
             elif commanded is not None:
                 used = commanded
@@ -307,13 +340,25 @@ def optimize(
             else:
                 remaining -= used
                 if peak_remaining is not None:
-                    peak_remaining -= used
+                    # Peak headroom is GRID-import allowance (the demand math
+                    # works on grid offtake): only the part of the draw beyond
+                    # the available solar consumes it. Charging solar-covered
+                    # draw against it would falsely starve downstream (forced)
+                    # appliances of grid headroom that is actually untouched.
+                    solar_used = min(used, solar_avail)
+                    peak_remaining -= max(used - solar_used, 0.0)
         else:
             _LOGGER.debug("  - %s (mode=%s): OFF, run condition not met", name, mode)
+            # Forget the setpoint tracking: a re-activation must write a fresh
+            # setpoint immediately instead of silently holding the stale value
+            # through the hold window (e.g. switching back on at 16 A against a
+            # 6 A budget).
+            state.last_fixed_amps = None
+            state.last_fixed_amps_change = None
 
     _LOGGER.debug(
         "optimize done: active=%s | leftover excess=%.2f A | leftover peak=%s",
-        active, remaining,
+        active_names, remaining,
         "off" if peak_remaining is None else f"{peak_remaining:.2f} A",
     )
     return OptimizeResult(active=active, decided_amps=decided_amps, fixed_amps_commands=commands)
@@ -329,14 +374,14 @@ def critical_shed(
     Each running appliance above its minimum (with an adjustable fixed_amps
     setpoint) is throttled to ``min_amps`` and kept on; appliances already at the
     minimum, or without an adjustable setpoint, are switched off. Returns the
-    kept names/amps and the fixed_amps commands (throttle-to-min writes).
+    kept appliance uids/amps and the fixed_amps commands (throttle-to-min writes).
     """
     kept: list[str] = []
     kept_amps = 0.0
     commands: list[SetFixedAmps] = []
     for app in appliances:
         name = app.name
-        state = states.setdefault(name, ApplianceState())
+        state = states.setdefault(app.uid, ApplianceState())
         if app.mode == MODE_UNMANAGED or not app.entity_on:
             continue
         min_a = app.min_amps
@@ -347,8 +392,8 @@ def critical_shed(
             state.last_change = now
             state.last_fixed_amps = float(min_a)
             state.last_fixed_amps_change = now
-            commands.append(SetFixedAmps(name, float(min_a)))
-            kept.append(name)
+            commands.append(SetFixedAmps(app.uid, float(min_a)))
+            kept.append(app.uid)
             kept_amps += min_a
             _LOGGER.warning(
                 "demand CRITICAL: %s throttled %.1f A -> min %d A (will shed if still critical)",

@@ -71,3 +71,7 @@ DEMAND_HYSTERESIS_KW = 0.2
 DEMAND_HIGH_GATE_MINUTES = 6
 DEMAND_CRITICAL_GATE_MINUTES = 8
 DEMAND_UPDATE_INTERVAL_SECONDS = 10
+# How long held (last-known) demand readings may bridge a source dropout
+# before the feature reports itself unavailable instead of acting on stale
+# data (frozen estimates re-latching Critical every quarter, frozen headroom).
+DEMAND_STALE_SECONDS = 300

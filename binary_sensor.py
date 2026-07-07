@@ -1,8 +1,6 @@
 """Binary sensor platform for Energy Management System (quarterly demand)."""
 from __future__ import annotations
 
-import logging
-
 from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
     BinarySensorDeviceClass,
@@ -11,8 +9,6 @@ from .const import DOMAIN
 from .entity import EMSEntity
 from .coordinator import SolarApplianceCoordinator
 from .demand_coordinator import QuarterlyDemandCoordinator
-
-_LOGGER = logging.getLogger(__name__)
 
 # (data key, translation key) for the quarterly-demand warning binary sensors.
 _DEMAND_BINARY_SENSORS: list[tuple[str, str]] = [

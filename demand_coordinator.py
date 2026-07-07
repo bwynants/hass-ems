@@ -30,6 +30,7 @@ from .const import (
     DEFAULT_PEAK_HIGH_SAFETY,
     DEFAULT_PEAK_CRITICAL_SAFETY,
     DEMAND_UPDATE_INTERVAL_SECONDS,
+    DEMAND_STALE_SECONDS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -57,6 +58,17 @@ class QuarterlyDemandCoordinator(DataUpdateCoordinator):
         self._store = Store(hass, 1, f"{DOMAIN}_demand_{entry.entry_id}")
         self._month_max_value: float | None = None
         self._previous_month_max: float | None = None
+        # Last known good readings, held when a source sensor is momentarily
+        # unavailable: a dropout must not zero the estimate (which would
+        # release the Critical latch mid-peak) or collapse the month max to
+        # the minimal floor (false Critical + Store churn).
+        self._last_current_avg = 0.0
+        self._last_power_consumed = 0.0
+        self._last_month_max: float | None = None
+        # Consecutive cycles a configured source has been unavailable. Past
+        # DEMAND_STALE_SECONDS the feature reports itself unavailable rather
+        # than acting on frozen data.
+        self._stale_cycles = 0
 
     async def async_load(self) -> None:
         """Load the persisted month-max history (call once before first refresh)."""
@@ -107,15 +119,57 @@ class QuarterlyDemandCoordinator(DataUpdateCoordinator):
         # The feature needs at least the current-quarter average and the
         # monthly-max source; the power-consumed source is optional.
         if not current_avg_id or not month_max_id:
+            # Also forget the held readings so a later reconfigure starts fresh.
+            self._last_current_avg = 0.0
+            self._last_power_consumed = 0.0
+            self._last_month_max = None
+            self._stale_cycles = 0
             return self._inactive()
 
         now = dt_util.now()
         minute_in_quarter = now.minute % 15
         seconds_done = minute_in_quarter * 60 + now.second
 
-        current_so_far = (self._read_kw(current_avg_id) or 0.0) if seconds_done > 0 else 0.0
-        power_consumed = self._read_kw(power_consumed_id) or 0.0
-        month_max_src = self._read_kw(month_max_id) or 0.0
+        # Read the sources, holding the last known value on a dropout.
+        current_raw = self._read_kw(current_avg_id)
+        if current_raw is not None:
+            self._last_current_avg = current_raw
+        consumed_raw = self._read_kw(power_consumed_id)
+        if consumed_raw is not None:
+            self._last_power_consumed = consumed_raw
+        month_raw = self._read_kw(month_max_id)
+        if month_raw is not None:
+            self._last_month_max = month_raw
+
+        # Held values may only bridge SHORT dropouts. Past the stale limit,
+        # report the feature unavailable instead of acting on frozen data
+        # (a frozen estimate would re-latch Critical every quarter; a frozen
+        # headroom would strangle the optimizer indefinitely).
+        any_missing = (
+            current_raw is None
+            or month_raw is None
+            or (bool(power_consumed_id) and consumed_raw is None)
+        )
+        self._stale_cycles = self._stale_cycles + 1 if any_missing else 0
+        stale_limit = max(1, DEMAND_STALE_SECONDS // DEMAND_UPDATE_INTERVAL_SECONDS)
+        if self._stale_cycles > stale_limit:
+            if self._stale_cycles == stale_limit + 1:
+                _LOGGER.warning(
+                    "demand sources unavailable for over %d s; "
+                    "quarterly-demand feature reporting unavailable",
+                    DEMAND_STALE_SECONDS,
+                )
+            return self._inactive()
+
+        current_so_far = self._last_current_avg if seconds_done > 0 else 0.0
+        power_consumed = self._last_power_consumed
+        # If the month-max sensor has never reported (e.g. unavailable at
+        # startup), fall back to the persisted value instead of 0.
+        month_max_src = (
+            self._last_month_max
+            if self._last_month_max is not None
+            else (self._month_max_value or 0.0)
+        )
 
         minimal = float(config.get(CONF_MINIMAL_PEAK_WARNING, DEFAULT_MINIMAL_PEAK_WARNING))
         high_safety = float(config.get(CONF_PEAK_HIGH_SAFETY, DEFAULT_PEAK_HIGH_SAFETY))
@@ -146,18 +200,21 @@ class QuarterlyDemandCoordinator(DataUpdateCoordinator):
         self._critical_on = r.critical
 
         # Retain the previous month-max whenever the value changes, so a new
-        # peak can be reported against what it was before. Persisted on change.
-        if self._month_max_value is None:
-            self._month_max_value = month_max
-            await self._store.async_save(
-                {"month_max_value": self._month_max_value, "previous_month_max": self._previous_month_max}
-            )
-        elif round(month_max, 2) != round(self._month_max_value, 2):
-            self._previous_month_max = self._month_max_value
-            self._month_max_value = month_max
-            await self._store.async_save(
-                {"month_max_value": self._month_max_value, "previous_month_max": self._previous_month_max}
-            )
+        # peak can be reported against what it was before. Persisted on change —
+        # but only once the source has actually reported this runtime: persisting
+        # the minimal-floor fallback would fabricate a bogus "previous peak".
+        if self._last_month_max is not None:
+            if self._month_max_value is None:
+                self._month_max_value = month_max
+                await self._store.async_save(
+                    {"month_max_value": self._month_max_value, "previous_month_max": self._previous_month_max}
+                )
+            elif round(month_max, 2) != round(self._month_max_value, 2):
+                self._previous_month_max = self._month_max_value
+                self._month_max_value = month_max
+                await self._store.async_save(
+                    {"month_max_value": self._month_max_value, "previous_month_max": self._previous_month_max}
+                )
 
         _LOGGER.debug(
             "demand: estimate=%.2f month_max=%.2f high_limit=%.2f crit_limit=%.2f "

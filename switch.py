@@ -1,15 +1,11 @@
 """Switch platform for Energy Management System."""
 from __future__ import annotations
 
-import logging
-
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.components.switch import SwitchEntity
 from .const import DOMAIN
 from .entity import EMSEntity
 from .coordinator import SolarApplianceCoordinator
-
-_LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass, entry, async_add_entities):
     coordinator: SolarApplianceCoordinator = hass.data[DOMAIN][entry.entry_id]
@@ -34,11 +30,11 @@ class SolarApplianceAutoSwitch(EMSEntity, SwitchEntity):
         """Return true if automatic switching is enabled."""
         return self.coordinator.enabled
 
-    async def async_turn_on(self) -> None:
+    async def async_turn_on(self, **kwargs) -> None:
         """Enable automatic switching."""
         await self._async_set_enabled(True)
 
-    async def async_turn_off(self) -> None:
+    async def async_turn_off(self, **kwargs) -> None:
         """Disable automatic switching."""
         await self._async_set_enabled(False)
 

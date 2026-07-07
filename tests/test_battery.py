@@ -15,6 +15,7 @@ def _app(**kw):
         ignore_battery_protection=False, min_soc_override=None, soc_hysteresis_percent=5,
     )
     base.update(kw)
+    base.setdefault("uid", base["name"])
     return ApplianceInput(**base)
 
 

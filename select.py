@@ -1,15 +1,11 @@
 """Select platform for runtime mode changes (persistent)."""
 from __future__ import annotations
 
-import logging
-
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from .const import DOMAIN, MODES, DEFAULT_MODE, CONF_RUNTIME_MODE, CONF_RUNTIME_MODES, CONF_NAME, get_appliances
 from .entity import EMSEntity
 from .coordinator import SolarApplianceCoordinator
-
-_LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass, entry: ConfigEntry, async_add_entities):
     coordinator: SolarApplianceCoordinator = hass.data[DOMAIN][entry.entry_id]
@@ -32,19 +28,15 @@ class SolarApplianceModeSelect(EMSEntity, SelectEntity):
         super().__init__(coordinator)
         self.appliance = appliance
         self._attr_name = f"{appliance[CONF_NAME]} Mode"
-        # Prefer stable subentry id for uniqueness/persistence, fall back to name
-        self._appliance_id = appliance.get("subentry_id") or appliance.get("id")
-        self._attr_unique_id = f"{DOMAIN}_{self._appliance_id}_mode" if self._appliance_id else f"{DOMAIN}_{appliance[CONF_NAME]}_mode"
+        # The config subentry id: the stable identity for uniqueness/persistence.
+        self._appliance_id = appliance["subentry_id"]
+        self._attr_unique_id = f"{DOMAIN}_{self._appliance_id}_mode"
         self._attr_options = MODES
         self._appliance_name = appliance[CONF_NAME]
 
     @property
     def current_option(self) -> str:
         """Return current mode (from persistent storage)."""
-        if not self._appliance_id:
-            _LOGGER.warning("Appliance %s has no subentry_id; using default mode", self._appliance_name)
-            return DEFAULT_MODE
-
         return self.coordinator.get_appliance_persistent_setting(
             self._appliance_id,
             CONF_RUNTIME_MODE,
@@ -55,11 +47,6 @@ class SolarApplianceModeSelect(EMSEntity, SelectEntity):
     async def async_select_option(self, option: str) -> None:
         """Change mode and save persistently."""
         if option not in MODES:
-            return
-        entry = self.coordinator.config_entry
-        appliance_id = self._appliance_id
-        if not appliance_id:
-            _LOGGER.warning("Cannot persist runtime mode for %s: missing subentry_id", self._appliance_name)
             return
 
         # Persist to the subentry when available

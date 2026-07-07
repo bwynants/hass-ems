@@ -29,7 +29,7 @@ def get_appliances(entry: ConfigEntry) -> list[dict[str, Any]]:
     changes back to the specific subentry.
     """
     return [
-        dict({**subentry.data, "subentry_id": getattr(subentry, "subentry_id", None) or getattr(subentry, "id", None)})
+        {**subentry.data, "subentry_id": subentry.subentry_id}
         for subentry in entry.subentries.values()
         if subentry.subentry_type == SUBENTRY_TYPE_APPLIANCE
     ]
@@ -43,6 +43,11 @@ CONF_PEAK_TARIFF_SENSOR = "peak_tariff_sensor"
 CONF_VOLTAGE = "voltage"
 CONF_MIN_SOC = "min_soc"
 CONF_BATTERY_PROTECTION_MODE = "battery_protection_mode"
+
+# Electricity prices (€/kWh), used by the off_peak-mode breakeven decision.
+CONF_COST_PEAK = "cost_peak"
+CONF_COST_OFFPEAK = "cost_offpeak"
+CONF_GAIN_EXPORT = "gain_export"
 
 # Quarterly demand (capacity-tariff) feature
 CONF_DEMAND_POWER_CURRENT_PEAK_SENSOR = "demand_power_current_peak_sensor"

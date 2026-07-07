@@ -20,6 +20,7 @@ def _app(**kw):
         ignore_battery_protection=False, min_soc_override=None, soc_hysteresis_percent=5,
     )
     base.update(kw)
+    base.setdefault("uid", base["name"])
     return ApplianceInput(**base)
 
 
@@ -58,8 +59,10 @@ def test_scaled_amps_clamps():
 def test_breakeven():
     # 6 * (0.40-0.20)/(0.40-0.10) = 6 * 0.2/0.3 = 4.0
     assert breakeven(6, 0.40, 0.20, 0.10) == 4.0
-    # degenerate denominator → 0
-    assert breakeven(6, 0.10, 0.20, 0.10) == 0
+    # Degenerate / negative denominator (export gain >= peak cost) fails
+    # CLOSED: running at peak can never beat waiting, threshold saturates.
+    assert breakeven(6, 0.10, 0.20, 0.10) == float("inf")
+    assert breakeven(6, 0.10, 0.20, 0.20) == float("inf")
 
 
 def test_actual_amps_priority_measured_then_fixed_then_min():
