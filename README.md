@@ -108,9 +108,9 @@ Each appliance gets a **Select** entity to change its mode from the HA UI. Modes
 | Mode | Behaviour |
 |---|---|
 | `partial_solar` | Runs only when averaged excess solar ≥ `partial_min_excess` W *(default)* |
-| `full_solar` | Solar-only — runs **only** when both the current *and* the averaged solar excess fully cover the appliance (`remaining ≥ min_amps` **and** `avg_excess ≥ min_amps`); never imports from the grid, and a momentary spike won't commit it to a run it can't sustain. No partial-coverage or off-peak fallback |
+| `full_solar` | Solar-only — never imports from the grid, no partial-coverage or off-peak fallback. **Start/stop are asymmetric:** to *start*, both the current *and* the averaged solar excess must cover the appliance (`remaining ≥ min_amps` **and** `avg_excess ≥ min_amps`), so a momentary spike won't commit it to a run it can't sustain; to *stay on*, only the averaged excess must still cover it (`avg_excess ≥ min_amps`), so a short solar dip won't drop a long-running appliance the next cycle |
 | `forced` | Runs whenever it can reach `min_amps`. Solar surplus and grid peak-headroom are **additive** — solar is used *on top of* grid power, scaling the setpoint up to `max_amps` (the grid-imported part stays bounded by the High/peak limit) |
-| `off_peak` | Runs freely during off-peak hours; during peak hours uses a breakeven calculation against export/peak tariff rates |
+| `off_peak` | Runs freely during the **cheapest** tariff period. That is normally the off-peak window; but with dynamic tariffs, when the peak price drops **below** the off-peak price the peak window becomes the cheap one and it runs freely there too. Otherwise (peak hours, peak dearer) it uses a breakeven calculation against export/peak tariff rates. (Eligibility only — the quarter-hour demand cap still applies.) |
 | `unmanaged` | EMS ignores the appliance entirely — it neither switches it on/off nor adjusts its amps, and its draw is treated as base load. Use this instead of a separate enable/disable switch |
 
 ---

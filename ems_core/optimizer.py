@@ -62,20 +62,40 @@ def _basic_condition(
         return True
 
     is_off_peak = energy.off_peak
-    if is_off_peak:
-        if mode == MODE_OFF_PEAK:
-            _LOGGER.debug("%s mode=%s, is_off_peak=%s", name, mode, is_off_peak)
-            return True
+    # off_peak mode runs freely during the CHEAPEST tariff period. Normally that
+    # is the configured off-peak window. But with dynamic tariffs the peak price
+    # can fall BELOW the off-peak price — then the "peak" window is actually the
+    # cheap one, so run freely there too instead of gating on the solar
+    # breakeven (which is meaningless, and would even go negative, once peak is
+    # the cheaper rate). Off-peak-hours free-run is unchanged.
+    peak_cheaper = energy.cost_peak < energy.cost_offpeak
+    if mode == MODE_OFF_PEAK and (is_off_peak or peak_cheaper):
+        _LOGGER.debug(
+            "%s mode=off_peak run-free (is_off_peak=%s, peak_cheaper=%s: peak=%.3f offpeak=%.3f)",
+            name, is_off_peak, peak_cheaper, energy.cost_peak, energy.cost_offpeak,
+        )
+        return True
 
     required_a = app.min_amps
 
     if mode == MODE_FULL_SOLAR:
-        # Solar-only: require BOTH the current budget AND the sustained average
-        # to cover the appliance, so a single-cycle spike can't commit it to a
-        # run it can't hold — and it never imports from the grid. No partial or
-        # off-peak fallback. (Checked before the generic instantaneous
-        # early-return below so the averaged requirement is not bypassed.)
-        covered = remaining >= required_a and avg_excess >= required_a
+        # Solar-only: never imports from the grid, and no partial/off-peak
+        # fallback. Start and stop are ASYMMETRIC:
+        #   * to START (currently off) require BOTH the current budget AND the
+        #     sustained average to cover the appliance, so a single-cycle spike
+        #     can't commit it to a run it can't hold;
+        #   * to STAY ON (currently on) require only the sustained average to
+        #     still cover it, so a momentary dip — with the rolling average
+        #     still healthy — doesn't drop a long-running appliance the very
+        #     next cycle. (The instantaneous budget alone is too twitchy once
+        #     the on/off hysteresis window, timed from the last change, has
+        #     expired.)
+        # (Checked before the generic instantaneous early-return below so the
+        # averaged requirement is not bypassed.)
+        if state.is_on:
+            covered = avg_excess >= required_a
+        else:
+            covered = remaining >= required_a and avg_excess >= required_a
         # "Transient spike": current budget covers but the sustained average
         # doesn't. Logged at INFO once on entering the condition (it's the
         # non-obvious reason the run condition fails), then at DEBUG on

@@ -7,7 +7,7 @@ from ems_core.models import (
     ApplianceInput, ApplianceState, EnergyInput, BatteryStatus, SetFixedAmps,
 )
 from ems_core.const import (
-    MODE_FORCED, MODE_PARTIAL_SOLAR, MODE_FULL_SOLAR, MODE_UNMANAGED,
+    MODE_FORCED, MODE_PARTIAL_SOLAR, MODE_FULL_SOLAR, MODE_OFF_PEAK, MODE_UNMANAGED,
     BATTERY_MODE_STRICT, BATTERY_MODE_RELAXED,
 )
 
@@ -140,6 +140,96 @@ def test_full_solar_on_when_sustained_and_current():
     assert res.active == ["a"]
 
 
+def test_full_solar_running_survives_short_drop_on_average():
+    # A long-running full_solar appliance (hysteresis window already expired)
+    # rides through a single-cycle solar drop because the sustained average
+    # still covers it — the instantaneous budget alone would drop it too soon.
+    app = _app(mode=MODE_FULL_SOLAR, min_amps=6, hysteresis_seconds=120,
+               averaging_window_seconds=180)
+    st = ApplianceState()
+    st.is_on = True
+    st.last_change = T0 - timedelta(seconds=3600)  # running for an hour
+    st.excess_history.extend([10.0] * 18)          # healthy sustained solar
+    states = {"a": st}
+    # One cycle at 0 A: avg = (17*10 + 0)/18 ~= 9.4 A >= 6 -> stays on.
+    res = optimize([app], states, excess_amps=0.0, peak_amps=None,
+                   energy=_energy(), battery=NO_BAT, now=T0)
+    assert res.active == ["a"]
+
+
+def test_full_solar_running_turns_off_when_average_falls():
+    # The asymmetric hold is not a latch: a *sustained* drop that pulls the
+    # rolling average below min still turns a running appliance off (past the
+    # hysteresis window).
+    app = _app(mode=MODE_FULL_SOLAR, min_amps=6, hysteresis_seconds=120,
+               averaging_window_seconds=180)
+    st = ApplianceState()
+    st.is_on = True
+    st.last_change = T0 - timedelta(seconds=3600)
+    st.excess_history.extend([2.0] * 18)  # average well below min
+    states = {"a": st}
+    res = optimize([app], states, excess_amps=2.0, peak_amps=None,
+                   energy=_energy(), battery=NO_BAT, now=T0)
+    assert res.active == []
+
+
+def test_full_solar_start_still_requires_current_and_average():
+    # Starting (currently off) is unchanged: the sustained average alone is not
+    # enough — the current budget must cover too, or a spike would commit it.
+    app = _app(mode=MODE_FULL_SOLAR, min_amps=6, averaging_window_seconds=180)
+    st = ApplianceState()
+    st.is_on = False
+    st.excess_history.extend([10.0] * 18)  # avg healthy...
+    states = {"a": st}
+    # ...but the current budget is below min -> must NOT start.
+    res = optimize([app], states, excess_amps=3.0, peak_amps=None,
+                   energy=_energy(), battery=NO_BAT, now=T0)
+    assert res.active == []
+
+
+def test_off_peak_runs_free_during_off_peak_hours():
+    # Baseline unchanged: off_peak mode runs freely in the off-peak window even
+    # while importing (excess negative).
+    app = _app(mode=MODE_OFF_PEAK, min_amps=6)
+    states = {}
+    res = optimize([app], states, excess_amps=-10.0, peak_amps=None,
+                   energy=_energy(off_peak=True), battery=NO_BAT, now=T0)
+    assert res.active == ["a"]
+
+
+def test_off_peak_gated_by_breakeven_when_peak_dearer():
+    # Peak hours, peak dearer than off-peak (default 0.40 > 0.20), importing ->
+    # the solar breakeven gate keeps it OFF.
+    app = _app(mode=MODE_OFF_PEAK, min_amps=6)
+    states = {}
+    res = optimize([app], states, excess_amps=-10.0, peak_amps=None,
+                   energy=_energy(off_peak=False), battery=NO_BAT, now=T0)
+    assert res.active == []
+
+
+def test_off_peak_runs_free_when_peak_cheaper_than_off_peak():
+    # Dynamic tariff inversion: during PEAK hours but peak price BELOW off-peak
+    # price -> peak is the cheap period, so run freely even while importing
+    # (this is the case the old breakeven-only gate would drop under heavy import).
+    app = _app(mode=MODE_OFF_PEAK, min_amps=6)
+    states = {}
+    res = optimize([app], states, excess_amps=-10.0, peak_amps=None,
+                   energy=_energy(off_peak=False, cost_peak=0.15, cost_offpeak=0.20),
+                   battery=NO_BAT, now=T0)
+    assert res.active == ["a"]
+
+
+def test_off_peak_free_run_still_respects_peak_headroom():
+    # Running "freely" is only about eligibility — the quarter-hour demand cap
+    # still sheds it when headroom is below min.
+    app = _app(mode=MODE_OFF_PEAK, min_amps=6)
+    states = {}
+    res = optimize([app], states, excess_amps=0.0, peak_amps=3.0,
+                   energy=_energy(off_peak=False, cost_peak=0.15, cost_offpeak=0.20),
+                   battery=NO_BAT, now=T0)
+    assert res.active == []
+
+
 def test_soc_strict_blocks():
     app = _app(mode=MODE_FORCED, min_amps=6)
     bat = BatteryStatus(soc=10, min_soc=20, protection_mode=BATTERY_MODE_STRICT)
@@ -210,7 +300,9 @@ def test_setpoint_cleared_on_turn_off():
 
 
 def test_on_off_hysteresis_holds_recent_state():
-    # full_solar so the run condition is purely "remaining >= min" (no averaging).
+    # full_solar: a running appliance stays on while its rolling average covers
+    # it, so here the excess drops straight to 0 and the average follows down —
+    # the switch-off is gated only by the on/off hysteresis window.
     app = _app(mode=MODE_FULL_SOLAR, min_amps=6, hysteresis_seconds=120)
     # Cycle 1: turns on at T0
     states = {}
