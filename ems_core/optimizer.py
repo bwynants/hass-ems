@@ -13,6 +13,7 @@ import logging
 from .const import (
     MODE_FORCED, MODE_PARTIAL_SOLAR, MODE_FULL_SOLAR, MODE_OFF_PEAK, MODE_UNMANAGED,
     BATTERY_MODE_RELAXED, DEFAULT_VOLTAGE, CONTROLLER_UPDATE_INTERVAL,
+    FORCED_PEAK_HEADROOM_AMPS, SUNDOWN_SOLAR_W,
 )
 from .models import (
     ApplianceInput, ApplianceState, EnergyInput, BatteryStatus,
@@ -283,9 +284,25 @@ def optimize(
         # In `forced` mode, solar surplus and the grid peak-headroom are ADDITIVE
         # — solar is used on top of grid power (the grid part still bounded by the
         # peak/High limit). Other modes use solar only, capped by the headroom.
-        forced_additive = mode == MODE_FORCED and peak_remaining is not None
+        # An `off_peak` appliance behaves like forced too, but only during
+        # off-peak hours at sundown (no solar to follow): cheap night grid should
+        # charge it at full rate up to the peak limit, not dribble at min_amps.
+        off_peak_night = (
+            mode == MODE_OFF_PEAK and energy.off_peak
+            and energy.solar_w <= SUNDOWN_SOLAR_W
+        )
+        forced_additive = (mode == MODE_FORCED or off_peak_night) and peak_remaining is not None
         solar_avail = max(remaining, 0.0)
-        forced_budget = remaining + peak_remaining if forced_additive else None
+        if forced_additive:
+            # Reserve FORCED_PEAK_HEADROOM_AMPS of the grid (peak) headroom so the
+            # appliance doesn't scale right up to the quarter-hour demand limit —
+            # filling it completely pushes the peak to the cap and gets the
+            # appliance shed, causing on/off oscillation. Solar is used freely;
+            # only the grid portion is held back.
+            grid_headroom = max(peak_remaining - FORCED_PEAK_HEADROOM_AMPS, 0.0)
+            forced_budget = remaining + grid_headroom
+        else:
+            forced_budget = None
 
         state = states.setdefault(app.uid, ApplianceState())
 

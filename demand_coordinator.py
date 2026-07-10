@@ -230,6 +230,7 @@ class QuarterlyDemandCoordinator(DataUpdateCoordinator):
             "high_limit": round(high_limit, 2),
             "critical_limit": round(critical_limit, 2),
             "max_power_to_peak": round(max_power_to_peak, 2),
+            "minute_in_quarter": minute_in_quarter,
             "high": high,
             "critical": critical,
             "previous_month_max": round(self._previous_month_max, 2) if self._previous_month_max is not None else None,

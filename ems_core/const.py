@@ -39,6 +39,18 @@ DEFAULT_IS_BATTERY = False
 # Minimum excess watts required to run in partial_solar mode (per appliance).
 DEFAULT_PARTIAL_MIN_EXCESS = 1000
 
+# Extra grid (peak) headroom, in amps, that a forced appliance leaves unused
+# when scaling against the quarter-hour demand limit. Filling the headroom
+# completely drives the peak to the cap, which sheds the appliance and causes
+# on/off oscillation; reserving this margin lets it run steadily below the cap.
+FORCED_PEAK_HEADROOM_AMPS = 1.0
+
+# Solar production (W) at or below which it is treated as "sundown" (no solar to
+# follow). An off_peak-mode appliance, during off-peak hours at sundown, then
+# scales up on cheap grid like a forced appliance (additive budget, up to the
+# peak limit) instead of dribbling at min_amps.
+SUNDOWN_SOLAR_W = 100.0
+
 # Off-peak breakeven default tariff rates (€/kWh). Not exposed in the UI, so the
 # breakeven gate always uses these unless a config override is supplied.
 DEFAULT_COST_PEAK = 0.40
@@ -74,6 +86,16 @@ DEMAND_HYSTERESIS_KW = 0.2
 DEMAND_HIGH_GATE_MINUTES = 6
 DEMAND_CRITICAL_GATE_MINUTES = 8
 DEMAND_UPDATE_INTERVAL_SECONDS = 10
+# Minutes at the END of a quarter during which the optimizer stops using the
+# (tail-ballooning) Max Power To Peak headroom and falls back to the sustainable
+# High-limit ceiling, so a last-moment ramp-up can't spike the next quarter's
+# projection (the boundary sawtooth).
+DEMAND_RAMP_FREEZE_MINUTES = 2
+# Cap on how far the optimizer may dip into banked Max Power To Peak headroom,
+# as a multiple of the High limit. The raw value balloons toward the quarter
+# tail (up to DEMAND_MAX_POWER_CAP_KW); this bounds the instantaneous over-draw
+# to a sane multiple so the appliance doesn't spike to its full max.
+DEMAND_MAX_TO_PEAK_CAP_FACTOR = 1.5
 # How long held (last-known) demand readings may bridge a source dropout
 # before the feature reports itself unavailable instead of acting on stale
 # data (frozen estimates re-latching Critical every quarter, frozen headroom).

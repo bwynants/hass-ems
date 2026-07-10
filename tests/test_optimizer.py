@@ -230,6 +230,45 @@ def test_off_peak_free_run_still_respects_peak_headroom():
     assert res.active == []
 
 
+def test_off_peak_night_scales_like_forced():
+    # off_peak mode, off-peak hours, sundown (no solar): scales up on cheap grid
+    # like forced (additive budget, up to max within the peak limit), not min.
+    app = _app(mode=MODE_OFF_PEAK, min_amps=6, max_amps=16,
+               has_fixed_amps=True, fixed_amps_value=6.0)
+    states = {}
+    res = optimize([app], states, excess_amps=0.0, peak_amps=20.0,
+                   energy=_energy(off_peak=True, solar_w=0.0), battery=NO_BAT, now=T0)
+    assert res.active == ["a"]
+    # forced_budget = 0 + (20 - 2 reserve) = 18 -> scaled to max 16.
+    assert res.fixed_amps_commands[0].value == 16.0
+
+
+def test_off_peak_day_does_not_grid_scale():
+    # Off-peak but with solar (daytime): NOT sundown -> solar-following, so with
+    # no surplus it runs at min, not scaled up on grid.
+    app = _app(mode=MODE_OFF_PEAK, min_amps=6, max_amps=16,
+               has_fixed_amps=True, fixed_amps_value=6.0)
+    states = {}
+    res = optimize([app], states, excess_amps=0.0, peak_amps=20.0,
+                   energy=_energy(off_peak=True, solar_w=3000.0), battery=NO_BAT, now=T0)
+    assert res.active == ["a"]
+    assert res.fixed_amps_commands[0].value == 6.0
+
+
+def test_off_peak_peak_hours_no_grid_scale_even_at_sundown():
+    # Sundown but PEAK hours (peak cheaper so it still runs): the forced-like
+    # grid scaling is gated on off-peak hours -> runs at min, not scaled up.
+    app = _app(mode=MODE_OFF_PEAK, min_amps=6, max_amps=16,
+               has_fixed_amps=True, fixed_amps_value=6.0)
+    states = {}
+    res = optimize([app], states, excess_amps=0.0, peak_amps=20.0,
+                   energy=_energy(off_peak=False, solar_w=0.0,
+                                  cost_peak=0.15, cost_offpeak=0.20),
+                   battery=NO_BAT, now=T0)
+    assert res.active == ["a"]
+    assert res.fixed_amps_commands[0].value == 6.0
+
+
 def test_soc_strict_blocks():
     app = _app(mode=MODE_FORCED, min_amps=6)
     bat = BatteryStatus(soc=10, min_soc=20, protection_mode=BATTERY_MODE_STRICT)
@@ -365,12 +404,12 @@ def test_peak_cap_off_goes_through_state_machine():
     r3 = optimize([app], states, excess_amps=0.0, peak_amps=8.0,
                   energy=_energy(), battery=NO_BAT, now=T0 + timedelta(seconds=20))
     assert r3.active == []
-    # Past the window -> on again with a FRESH setpoint write (7.5 = 0.5-step of
-    # the 8 A forced budget).
+    # Past the window -> on again with a FRESH setpoint write. Budget = 8 A peak
+    # minus the 1 A forced reserve = 7 A -> written 6.5 A (not the stale 16).
     r4 = optimize([app], states, excess_amps=0.0, peak_amps=8.0,
                   energy=_energy(), battery=NO_BAT, now=T0 + timedelta(seconds=90))
     assert r4.active == ["a"]
-    assert r4.fixed_amps_commands == [SetFixedAmps("a", 7.5)]
+    assert r4.fixed_amps_commands == [SetFixedAmps("a", 6.5)]
 
 
 def test_soc_block_held_when_sensor_unavailable():
@@ -412,6 +451,20 @@ def test_solar_covered_draw_keeps_peak_headroom():
     res = optimize([solar_app, forced_app], states, excess_amps=10.0, peak_amps=6.0,
                    energy=_energy(), battery=NO_BAT, now=T0)
     assert res.active == ["s", "f"]
+
+
+def test_forced_reserves_peak_headroom():
+    # Forced leaves 1 A of grid headroom unused so it doesn't scale up to the
+    # demand cap (which would shed it). With 10 A peak headroom and no solar it
+    # targets 9 A (10 - 1), written as 8.5 A — not the 9.5 A it would take if it
+    # consumed the whole headroom. ~1 A of peak headroom is left over.
+    app = _app(mode=MODE_FORCED, min_amps=6, max_amps=16,
+               has_fixed_amps=True, fixed_amps_value=6.0)
+    states = {}
+    res = optimize([app], states, excess_amps=0.0, peak_amps=10.0,
+                   energy=_energy(), battery=NO_BAT, now=T0)
+    assert res.active == ["a"]
+    assert res.fixed_amps_commands[0].value == 8.5
 
 
 def test_forced_additive_split_seen_by_second_appliance():
