@@ -29,7 +29,10 @@ from .const import (
     DEFAULT_COST_PEAK, DEFAULT_COST_OFFPEAK, DEFAULT_GAIN_EXPORT,
     MODE_UNMANAGED,
 )
-from .helpers import read_sensor, read_sensor_optional, read_binary, read_value, UNAVAILABLE_STATES
+from .helpers import (
+    read_sensor, read_sensor_optional, read_binary, read_value,
+    read_number_bounds, UNAVAILABLE_STATES,
+)
 from .ems_core import ApplianceInput, EnergyInput
 
 _LOGGER = logging.getLogger(__name__)
@@ -106,6 +109,16 @@ def build_appliance_inputs(hass, appliances, coordinator, voltage: float):
         uid = app["subentry_id"]
         is_battery = app.get(CONF_IS_BATTERY, False)
         fixed_entity = app.get(CONF_FIXED_AMPS)
+        # The "amps to use" (number/input_number) entity carries its own min/max
+        # bounds, so those are used as the appliance's min/max amps rather than
+        # separate config fields. Fall back to the configured values (or
+        # defaults) for on/off appliances, or if the entity omits bounds.
+        bounds = read_number_bounds(hass, fixed_entity) if fixed_entity else None
+        if bounds is not None:
+            min_amps, max_amps = bounds
+        else:
+            min_amps = app.get(CONF_MIN_AMPS, DEFAULT_MIN_AMPS)
+            max_amps = app.get(CONF_MAX_AMPS, DEFAULT_MAX_AMPS)
         # Our own last on/off decision — the fallback for an unavailable
         # controlled entity.
         runtime = coordinator.appliance_states.get(uid)
@@ -117,8 +130,8 @@ def build_appliance_inputs(hass, appliances, coordinator, voltage: float):
                 uid=uid,
                 name=name,
                 priority=app.get(CONF_PRIORITY, DEFAULT_PRIORITY),
-                min_amps=app.get(CONF_MIN_AMPS, DEFAULT_MIN_AMPS),
-                max_amps=app.get(CONF_MAX_AMPS, DEFAULT_MAX_AMPS),
+                min_amps=min_amps,
+                max_amps=max_amps,
                 mode=_resolve_mode(coordinator, app),
                 has_fixed_amps=bool(fixed_entity),
                 fixed_amps_value=read_sensor_optional(hass, fixed_entity) if fixed_entity else None,

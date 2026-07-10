@@ -98,7 +98,7 @@
             "priority": "Prioriteit",
             "min_amps": "Minimale stroom (A)",
             "max_amps": "Maximale stroom (A)",
-            "fixed_amps": "Ampère-getalentiteit",
+            "fixed_amps": "Te gebruiken ampère",
             "fixed_amps_hysteresis_seconds": "Vasthoudtijd ampère (seconden)",
             "power_sensor": "Vermogenssensor",
             "partial_min_excess": "Minimaal overschot bij gedeeltelijk zon (W)",
@@ -117,7 +117,7 @@
             "priority": "Lagere nummers draaien eerst wanneer het overschot beperkt is.",
             "min_amps": "Minimale stroom die het apparaat nodig heeft om te draaien.",
             "max_amps": "Maximale stroom die het apparaat mag trekken.",
-            "fixed_amps": "Optionele getalentiteit die de optimalisator tussen min en max instelt op basis van het beschikbare overschot.",
+            "fixed_amps": "Getalentiteit ('te gebruiken ampère') die de optimalisator instelt op basis van het beschikbare overschot; de eigen min/max worden de stroomlimieten van het apparaat.",
             "fixed_amps_hysteresis_seconds": "Minimale tijd dat het ampère-setpunt wordt vastgehouden voordat het opnieuw mag wijzigen.",
             "power_sensor": "Optionele sensor met het werkelijke vermogen van het apparaat (W); gebruikt voor de budgettering in plaats van een schatting.",
             "partial_min_excess": "Minimaal gemiddeld overschot om te draaien in de modus partial_solar.",
@@ -140,7 +140,7 @@
             "priority": "Prioriteit",
             "min_amps": "Minimale stroom (A)",
             "max_amps": "Maximale stroom (A)",
-            "fixed_amps": "Ampère-getalentiteit",
+            "fixed_amps": "Te gebruiken ampère",
             "fixed_amps_hysteresis_seconds": "Vasthoudtijd ampère (seconden)",
             "power_sensor": "Vermogenssensor",
             "partial_min_excess": "Minimaal overschot bij gedeeltelijk zon (W)",
@@ -159,7 +159,7 @@
             "priority": "Lagere nummers draaien eerst wanneer het overschot beperkt is.",
             "min_amps": "Minimale stroom die het apparaat nodig heeft om te draaien.",
             "max_amps": "Maximale stroom die het apparaat mag trekken.",
-            "fixed_amps": "Optionele getalentiteit die de optimalisator tussen min en max instelt op basis van het beschikbare overschot.",
+            "fixed_amps": "Getalentiteit ('te gebruiken ampère') die de optimalisator instelt op basis van het beschikbare overschot; de eigen min/max worden de stroomlimieten van het apparaat.",
             "fixed_amps_hysteresis_seconds": "Minimale tijd dat het ampère-setpunt wordt vastgehouden voordat het opnieuw mag wijzigen.",
             "power_sensor": "Optionele sensor met het werkelijke vermogen van het apparaat (W); gebruikt voor de budgettering in plaats van een schatting.",
             "partial_min_excess": "Minimaal gemiddeld overschot om te draaien in de modus partial_solar.",
@@ -196,7 +196,7 @@
         "name": "Status"
       },
       "managed_consumption_amps": {
-        "name": "Beheerd Ampere"
+        "name": "Beheerde Stroom"
       },
       "managed_consumption_power": {
         "name": "Beheerd vermogen"

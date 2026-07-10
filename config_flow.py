@@ -26,8 +26,6 @@ from .const import (
     SUBENTRY_TYPE_APPLIANCE,
     BATTERY_PROTECTION_MODES,
     DEFAULT_PRIORITY,
-    DEFAULT_MIN_AMPS,
-    DEFAULT_MAX_AMPS,
     DEFAULT_FIXED_AMPS_HYSTERESIS_SECONDS,
     DEFAULT_MIN_SOC,
     DEFAULT_BATTERY_MODE,
@@ -45,8 +43,6 @@ from .const import (
     CONF_NAME,
     CONF_ENTITY_ID,
     CONF_PRIORITY,
-    CONF_MIN_AMPS,
-    CONF_MAX_AMPS,
     CONF_FIXED_AMPS,
     CONF_FIXED_AMPS_HYSTERESIS_SECONDS,
     CONF_POWER_SENSOR,
@@ -180,9 +176,10 @@ def _appliance_schema(current: dict | None) -> vol.Schema:
         _prefill_marker(CONF_NAME, current, required=True, edit_default="Appliance"): str,
         _prefill_marker(CONF_ENTITY_ID, current, required=True): SWITCH_ENTITY_SELECTOR,
         _default_marker(CONF_PRIORITY, current, DEFAULT_PRIORITY, required=True): vol.All(int, vol.Range(0, 100)),
-        _default_marker(CONF_MIN_AMPS, current, DEFAULT_MIN_AMPS, required=True): vol.All(int, vol.Range(1, 20)),
-        _default_marker(CONF_MAX_AMPS, current, DEFAULT_MAX_AMPS, required=True): vol.All(int, vol.Range(1, 20)),
-        _suggest_marker(CONF_FIXED_AMPS, current): NUMBER_ENTITY_SELECTOR,
+        # Required "ampere to use" number entity; its own min/max become the
+        # appliance's amp limits (see control.build_appliance_inputs), so there
+        # are no separate min/max fields.
+        _prefill_marker(CONF_FIXED_AMPS, current, required=True): NUMBER_ENTITY_SELECTOR,
         _default_marker(CONF_FIXED_AMPS_HYSTERESIS_SECONDS, current, DEFAULT_FIXED_AMPS_HYSTERESIS_SECONDS): vol.All(int, vol.Range(min=0)),
         _suggest_marker(CONF_POWER_SENSOR, current): SENSOR_ENTITY_SELECTOR,
         _suggest_marker(CONF_PARTIAL_MIN_EXCESS, current): vol.All(int, vol.Range(0, 5000)),
@@ -384,7 +381,6 @@ class OptionsFlowHandler(ConfigSubentryFlow):
             # Optional entity fields are omitted from user_input when the user
             # clears them. Drop any that were left empty so they can be removed.
             for key in (
-                CONF_FIXED_AMPS,
                 CONF_POWER_SENSOR,
                 CONF_PARTIAL_MIN_EXCESS,
                 CONF_CONNECTED_SENSOR,

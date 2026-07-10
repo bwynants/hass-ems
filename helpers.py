@@ -71,6 +71,30 @@ def read_value(hass: HomeAssistant, source, default: float) -> float:
     return default if val is None else val
 
 
+def read_number_bounds(
+    hass: HomeAssistant, entity_id: str | None
+) -> tuple[float, float] | None:
+    """Return ``(min, max)`` from a number/input_number entity's attributes.
+
+    Both ``number`` and ``input_number`` expose ``min``/``max`` attributes.
+    Returns ``None`` when the entity is unset, unavailable, or doesn't expose
+    both bounds — so the caller can fall back to configured defaults.
+    """
+    if not entity_id:
+        return None
+    state = hass.states.get(entity_id)
+    if state is None or state.state in UNAVAILABLE_STATES:
+        return None
+    lo = state.attributes.get("min")
+    hi = state.attributes.get("max")
+    if lo is None or hi is None:
+        return None
+    try:
+        return float(lo), float(hi)
+    except (ValueError, TypeError):
+        return None
+
+
 def read_binary(
     hass: HomeAssistant,
     entity_id: str | None,

@@ -82,9 +82,7 @@ After setup, open the EMS **Options** to add appliances one at a time.
 | `name` | ✅ | Display name (must be unique) |
 | `entity_id` | ✅ | Switch entity to control |
 | `priority` | ❌ | Lower number = higher priority (default: `100`) |
-| `min_amps` | ✅ | Minimum amps needed to run (default: `6`) |
-| `max_amps` | ✅ | Maximum amps the appliance draws (default: `16`, configurable 1–20) |
-| `fixed_amps` | ❌ | Number entity; optimizer dynamically sets this entity based on available excess, scaled between `min_amps` and `max_amps` (e.g., `input_number.my_amps`) |
+| `fixed_amps` ("Ampere to use") | ✅ | The number/input_number entity the optimizer dynamically sets based on available excess, scaled between the entity's own **min** and **max**. Those bounds become the appliance's min/max amps — so there are no separate min/max fields (e.g., `input_number.my_amps` with min 6, max 16) |
 | `fixed_amps_hysteresis_seconds` | ❌ | Minimum seconds the `fixed_amps` setpoint is held before it may change to another value, preventing it from switching too often (default: `120`) |
 | `power_sensor` | ❌ | Sensor (W) reporting the appliance's real power draw; when set, the optimizer deducts measured consumption from the budget instead of estimating. Falls back to `fixed_amps` setpoint, then `min_amps` |
 | `partial_min_excess` | ❌ | Minimum excess Watts required in `partial_solar` mode (default: `1000`) |
