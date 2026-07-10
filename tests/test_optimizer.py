@@ -60,8 +60,8 @@ def test_non_forced_throttled_to_peak_headroom():
                    energy=_energy(), battery=NO_BAT, now=T0)
     assert res.active == ["a"]
     # scaled(16 clamped to max 16) then min(16, peak 8)=8; first write rounds
-    # 8 down-with-margin to 7 (run at 7 until 8.5 available).
-    assert res.fixed_amps_commands[0].value == 7.0
+    # 8 down-with-margin to 7.5 (0.5 A step, 0.25 A deadband: 8 - 0.25 -> 7.5).
+    assert res.fixed_amps_commands[0].value == 7.5
 
 
 def test_peak_headroom_sheds_when_below_min():
@@ -365,11 +365,12 @@ def test_peak_cap_off_goes_through_state_machine():
     r3 = optimize([app], states, excess_amps=0.0, peak_amps=8.0,
                   energy=_energy(), battery=NO_BAT, now=T0 + timedelta(seconds=20))
     assert r3.active == []
-    # Past the window -> on again with a FRESH setpoint write (7 = step of 8A).
+    # Past the window -> on again with a FRESH setpoint write (7.5 = 0.5-step of
+    # the 8 A forced budget).
     r4 = optimize([app], states, excess_amps=0.0, peak_amps=8.0,
                   energy=_energy(), battery=NO_BAT, now=T0 + timedelta(seconds=90))
     assert r4.active == ["a"]
-    assert r4.fixed_amps_commands == [SetFixedAmps("a", 7.0)]
+    assert r4.fixed_amps_commands == [SetFixedAmps("a", 7.5)]
 
 
 def test_soc_block_held_when_sensor_unavailable():

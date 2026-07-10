@@ -1,10 +1,16 @@
-"""Whole-amp fixed_amps setpoint stepping and write-gating — pure functions."""
+"""fixed_amps setpoint stepping and write-gating — pure functions."""
 from __future__ import annotations
 
+import math
 from datetime import datetime
 
-from .const import FIXED_AMPS_DEADBAND
+from .const import FIXED_AMPS_DEADBAND, FIXED_AMPS_STEP
 from .models import FixedAmpsDecision
+
+
+def _quantise_down(value: float, step: float) -> float:
+    """Largest multiple of ``step`` not exceeding ``value`` (fp-safe)."""
+    return round(math.floor(round(value / step, 9)) * step, 6)
 
 
 def step_target(
@@ -13,25 +19,27 @@ def step_target(
     max_a: float,
     last_val: float | None,
     deadband: float = FIXED_AMPS_DEADBAND,
+    step: float = FIXED_AMPS_STEP,
 ) -> float:
-    """Quantise ``scaled`` to a whole-amp setpoint with a deadband/hysteresis.
+    """Quantise ``scaled`` to a ``step``-amp setpoint with a deadband/hysteresis.
 
-    Run at N amps only once N + deadband is available; once at N, hold it while
-    the value stays within ``[N - db, N + 1 + db)``; step UP when it reaches
-    ``(N + 1) + db`` (e.g. 6 -> 7 at 7.5) and step DOWN when it falls below
-    ``N - db`` (e.g. 6 -> 5 at 5.5), landing on the adjacent amp without
-    skipping. Full max is allowed once the budget reaches it. Result is clamped
-    to ``[min_a, max_a]``.
+    Run at increment N only once N + deadband is available; once at N, hold it
+    while the value stays within ``[N - db, N + step + db)``; step UP when it
+    reaches ``(N + step) + db`` and step DOWN when it falls below ``N - db``,
+    landing on the adjacent increment without skipping. With the defaults
+    (step=0.5, db=0.25): 6.8 -> 6.5, holds through [6.25, 6.75), steps up to 7.0
+    at 7.25 and down to 6.0 at 6.24. Full max is allowed once the budget reaches
+    it. Result is clamped to ``[min_a, max_a]``.
     """
     db = deadband
     if scaled >= max_a:
         target = float(max_a)
-    elif last_val is not None and (last_val - db) <= scaled < (last_val + 1 + db):
-        target = last_val                       # within hysteresis band → hold
-    elif last_val is None or scaled >= last_val + 1 + db:
-        target = float(int(scaled - db))        # step up (or first set)
+    elif last_val is not None and (last_val - db) <= scaled < (last_val + step + db):
+        target = last_val                              # within hysteresis band → hold
+    elif last_val is None or scaled >= last_val + step + db:
+        target = _quantise_down(scaled - db, step)     # step up (or first set)
     else:
-        target = float(int(scaled + db))        # step down to the adjacent amp
+        target = _quantise_down(scaled + db, step)     # step down to the adjacent increment
     return max(float(min_a), min(float(max_a), target))
 
 
@@ -45,6 +53,7 @@ def decide(
     interval: float,
     current_entity_value: float | None,
     deadband: float = FIXED_AMPS_DEADBAND,
+    step: float = FIXED_AMPS_STEP,
 ) -> FixedAmpsDecision:
     """Decide the effective amperage and whether to write a new setpoint.
 
@@ -53,7 +62,7 @@ def decide(
     changed target is written only once the hold window (``interval`` seconds)
     has elapsed; otherwise the setpoint is held (no write).
     """
-    target = step_target(scaled, min_a, max_a, last_val, deadband)
+    target = step_target(scaled, min_a, max_a, last_val, deadband, step)
 
     # First write: nothing to gate.
     if last_val is None:

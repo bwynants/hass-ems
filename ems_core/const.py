@@ -45,12 +45,15 @@ DEFAULT_COST_PEAK = 0.40
 DEFAULT_COST_OFFPEAK = 0.20
 DEFAULT_GAIN_EXPORT = 0.10
 
-# Main coordinator cycle interval (s) and the fixed_amps setpoint deadband (A).
-# The fixed_amps setpoint is quantised to whole amps, rounded DOWN with this
-# margin: run at N amps only once N + margin is available (e.g. 6.8 -> 6, and it
-# steps up to 7 only at 7.5). The margin also acts as a deadband against flicker.
+# Main coordinator cycle interval (s) and the fixed_amps setpoint quantisation.
+# The setpoint is quantised to FIXED_AMPS_STEP-amp increments, rounded DOWN with
+# the deadband margin: run at step N only once N + margin is available (e.g. with
+# a 0.5 A step and 0.25 A deadband, 6.8 -> 6.5, and it steps up to 7.0 only at
+# 7.25). The margin also acts as a deadband against flicker. A finer step suits
+# chargers with sub-amp (mA) current regulation, e.g. Peblar.
 CONTROLLER_UPDATE_INTERVAL = 10
-FIXED_AMPS_DEADBAND = 0.5
+FIXED_AMPS_DEADBAND = 0.25
+FIXED_AMPS_STEP = 0.5
 
 # How much wall-clock history to keep per appliance for excess averaging, and
 # the resulting sample count (one sample per cycle). Derived from the cycle
