@@ -10,8 +10,7 @@ from homeassistant.util import dt as dt_util
 from .const import (
     DOMAIN, CONF_PEAK_TARIFF_SENSOR, CONF_NAME, CONF_VOLTAGE,
     CONF_AUTO_SWITCHING, DEFAULT_AUTO_SWITCHING, DEFAULT_VOLTAGE,
-    CONTROLLER_UPDATE_INTERVAL, DEMAND_QUARTER_SECONDS,
-    DEMAND_RAMP_FREEZE_MINUTES, DEMAND_MAX_TO_PEAK_CAP_FACTOR, get_appliances,
+    CONTROLLER_UPDATE_INTERVAL, get_appliances,
 )
 from .helpers import read_sensor
 from . import control
@@ -178,38 +177,24 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
     def _get_peak_amps(self, voltage: float):
         """Grid-import ceiling in amps the optimizer scales into, or None.
 
-        Hybrid of the two peak models:
-        - For most of the quarter, use **Max Power To Peak** — the quarter-average
-          headroom that lets the appliance dip into banked slack (drawing more
-          while the running average is still low) — but capped at
-          ``DEMAND_MAX_TO_PEAK_CAP_FACTOR`` × the High limit so it can't spike to
-          the appliance's full max on the tail-of-quarter balloon.
-        - In the last ``DEMAND_RAMP_FREEZE_MINUTES`` minutes, fall back to the
-          sustainable **High-limit** ceiling (``min`` with Max Power To Peak so a
-          near-limit average still binds). Max Power To Peak balloons as the
-          quarter runs out, so without this a last-moment ramp-up would spike the
-          NEXT quarter's projection and get shed — the boundary sawtooth.
+        This is the **High limit** itself, NOT Max Power To Peak. The High limit
+        is a fixed ceiling, so it can't balloon or collapse at the quarter
+        boundary the way Max Power To Peak does (its remaining-time term makes it
+        spike for one cycle when the current-average source lags the reset, which
+        would shed a running appliance). Keeping total grid draw under the High
+        limit at every instant keeps every quarter's average under it too.
 
         Base load is not subtracted here: ``excess_amps`` (the optimizer's
         ``remaining``) already nets it out, so ``forced_budget = remaining +
-        ceiling`` is the true max draw.
+        ceiling`` is the true max draw. Max Power To Peak stays a monitoring
+        sensor only.
         """
         demand = self._demand_data()
         if not demand or voltage <= 0:
             return None
-        high_limit = demand.get("high_limit")
-        if high_limit is None:
+        kw = demand.get("high_limit")
+        if kw is None:
             return None
-        max_to_peak = demand.get("max_power_to_peak")
-        minute_in_quarter = demand.get("minute_in_quarter", 0)
-        quarter_minutes = DEMAND_QUARTER_SECONDS // 60
-        in_freeze = minute_in_quarter >= quarter_minutes - DEMAND_RAMP_FREEZE_MINUTES
-        if max_to_peak is None:
-            kw = high_limit
-        elif in_freeze:
-            kw = min(max_to_peak, high_limit)
-        else:
-            kw = min(max_to_peak, high_limit * DEMAND_MAX_TO_PEAK_CAP_FACTOR)
         return kw * 1000.0 / voltage
 
     async def _async_update_data(self):
