@@ -123,6 +123,17 @@ def build_appliance_inputs(hass, appliances, coordinator, voltage: float):
         # controlled entity.
         runtime = coordinator.appliance_states.get(uid)
         assumed_on = bool(runtime.is_on) if runtime else False
+        # Measured draw. Hold the last real reading across a power-sensor
+        # dropout so the surplus add-back never falls through to the commanded
+        # setpoint (which would run the setpoint away — see energy.actual_amps).
+        power_entity = app.get(CONF_POWER_SENSOR)
+        has_power_sensor = bool(power_entity)
+        measured = _measured_amps(hass, power_entity, voltage)
+        if has_power_sensor and runtime is not None:
+            if measured is not None:
+                runtime.last_measured_amps = measured
+            elif runtime.last_measured_amps is not None:
+                measured = runtime.last_measured_amps
         inputs.append(
             ApplianceInput(
                 # Stable id keying the runtime state: the config subentry id,
@@ -143,7 +154,8 @@ def build_appliance_inputs(hass, appliances, coordinator, voltage: float):
                 averaging_window_seconds=app.get(CONF_AVERAGING_WINDOW, DEFAULT_AVERAGING),
                 connected=_is_connected(hass, app.get(CONF_CONNECTED_SENSOR)),
                 entity_on=_is_on(hass, app.get(CONF_ENTITY_ID), assumed_on),
-                measured_amps=_measured_amps(hass, app.get(CONF_POWER_SENSOR), voltage),
+                measured_amps=measured,
+                has_power_sensor=has_power_sensor,
                 is_battery=is_battery,
                 ignore_battery_protection=app.get(
                     CONF_IGNORE_BATTERY_PROTECTION, DEFAULT_IGNORE_PROTECTION

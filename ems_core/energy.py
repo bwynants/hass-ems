@@ -60,13 +60,21 @@ def breakeven(min_amps, cost_peak, cost_offpeak, gain_export):
 
 
 def actual_amps(app: ApplianceInput) -> float:
-    """The appliance's effective draw in amps (never None).
+    """The appliance's effective draw in amps (never None), for the surplus add-back.
 
-    Prefers the measured power sensor; falls back to the fixed_amps setpoint
-    value, then to min_amps.
+    Prefers the measured power sensor. If a power sensor is configured but
+    currently unavailable, falls back to ``min_amps`` — deliberately NOT the
+    fixed_amps setpoint: the setpoint is the optimizer's own command, so adding
+    it back into the surplus would create a positive-feedback runaway (a stale
+    measurement makes add-back = setpoint → higher budget → higher setpoint →
+    …, ramping to max). Only when there is NO power sensor does it use the
+    setpoint (there the grid reading is the sole feedback, and a healthy grid
+    keeps the add-back honest). Falls back to ``min_amps`` last.
     """
     if app.measured_amps is not None:
         return app.measured_amps
+    if app.has_power_sensor:
+        return app.min_amps if app.min_amps is not None else DEFAULT_MIN_AMPS
     if app.has_fixed_amps and app.fixed_amps_value is not None:
         return app.fixed_amps_value
     return app.min_amps if app.min_amps is not None else DEFAULT_MIN_AMPS

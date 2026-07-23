@@ -71,6 +71,20 @@ def test_actual_amps_priority_measured_then_fixed_then_min():
     assert actual_amps(_app(min_amps=6)) == 6
 
 
+def test_actual_amps_stale_power_sensor_uses_min_not_setpoint():
+    # A power sensor is configured but currently unavailable (measured=None).
+    # The add-back must fall to min, NOT the fixed_amps setpoint — using the
+    # optimizer's own commanded setpoint here creates a positive-feedback
+    # runaway (add-back = setpoint -> higher budget -> higher setpoint -> ...).
+    app = _app(has_power_sensor=True, measured_amps=None,
+               has_fixed_amps=True, fixed_amps_value=16, min_amps=6)
+    assert actual_amps(app) == 6
+    # Without a power sensor, the setpoint is the only proxy and is still used.
+    no_sensor = _app(has_power_sensor=False, measured_amps=None,
+                     has_fixed_amps=True, fixed_amps_value=16, min_amps=6)
+    assert actual_amps(no_sensor) == 16
+
+
 def test_managed_consumption_sums_on_managed_only():
     apps = [
         _app(name="on", entity_on=True, has_fixed_amps=True, fixed_amps_value=8),

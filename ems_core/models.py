@@ -45,6 +45,10 @@ class ApplianceInput:
     ignore_battery_protection: bool
     min_soc_override: float | None
     soc_hysteresis_percent: float
+    # True when a power sensor is configured for this appliance. When it is but
+    # ``measured_amps`` is None (sensor unavailable), the surplus add-back must
+    # NOT fall back to the fixed_amps setpoint — see energy.actual_amps.
+    has_power_sensor: bool = False
     # Battery-only fields (populated when is_battery is True).
     battery_soc: float | None = None
     battery_min_soc: float | None = None
@@ -62,6 +66,9 @@ class ApplianceState:
         default_factory=lambda: deque(maxlen=APPLIANCE_HISTORY_MAXLEN)
     )
     soc_blocked: bool = False
+    # Last real measured draw (amps), held across a power-sensor dropout so the
+    # add-back doesn't fall through to the commanded setpoint (runaway guard).
+    last_measured_amps: float | None = None
     # True while a full_solar appliance is in the transient-spike condition
     # (current budget covers, sustained average doesn't) — used to log the
     # reason once on entry instead of every cycle.
