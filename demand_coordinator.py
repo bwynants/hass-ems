@@ -58,6 +58,9 @@ class QuarterlyDemandCoordinator(DataUpdateCoordinator):
         self._store = Store(hass, 1, f"{DOMAIN}_demand_{entry.entry_id}")
         self._month_max_value: float | None = None
         self._previous_month_max: float | None = None
+        # Armed at each quarter boundary; the "previous month max" baseline is
+        # snapshotted once, ~1 min into the quarter (see the persist block).
+        self._quarter_snapshot_armed = False
         # Last known good readings, held when a source sensor is momentarily
         # unavailable: a dropout must not zero the estimate (which would
         # release the Critical latch mid-peak) or collapse the month max to
@@ -199,22 +202,36 @@ class QuarterlyDemandCoordinator(DataUpdateCoordinator):
         self._high_on = r.high
         self._critical_on = r.critical
 
-        # Retain the previous month-max whenever the value changes, so a new
-        # peak can be reported against what it was before. Persisted on change —
-        # but only once the source has actually reported this runtime: persisting
-        # the minimal-floor fallback would fabricate a bogus "previous peak".
+        # Persist the month-max (used as the source fallback above, so it
+        # survives a restart / startup dropout) and snapshot the "previous
+        # month max" baseline. Only once the source has actually reported this
+        # runtime — persisting the minimal-floor fallback would fabricate a
+        # bogus peak.
+        dirty = False
         if self._last_month_max is not None:
-            if self._month_max_value is None:
+            if self._month_max_value is None or round(month_max, 2) != round(self._month_max_value, 2):
                 self._month_max_value = month_max
-                await self._store.async_save(
-                    {"month_max_value": self._month_max_value, "previous_month_max": self._previous_month_max}
-                )
-            elif round(month_max, 2) != round(self._month_max_value, 2):
-                self._previous_month_max = self._month_max_value
-                self._month_max_value = month_max
-                await self._store.async_save(
-                    {"month_max_value": self._month_max_value, "previous_month_max": self._previous_month_max}
-                )
+                dirty = True
+
+            # Snapshot the "previous month max" ONCE, ~1 minute into each
+            # quarter: at that point month_max still reflects the peak from
+            # BEFORE this quarter could set a new record, so a peak established
+            # during the quarter is reported against the prior value. (Snapshot
+            # once — not on every source change — so it doesn't chase a source
+            # that climbs in small steps and end up equal to the new peak.)
+            if seconds_done < 60:
+                self._quarter_snapshot_armed = True
+            elif self._quarter_snapshot_armed:
+                self._quarter_snapshot_armed = False
+                if (self._previous_month_max is None
+                        or round(self._previous_month_max, 2) != round(month_max, 2)):
+                    self._previous_month_max = month_max
+                    dirty = True
+
+        if dirty:
+            await self._store.async_save(
+                {"month_max_value": self._month_max_value, "previous_month_max": self._previous_month_max}
+            )
 
         _LOGGER.debug(
             "demand: estimate=%.2f month_max=%.2f high_limit=%.2f crit_limit=%.2f "
