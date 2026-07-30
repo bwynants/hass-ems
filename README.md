@@ -19,7 +19,7 @@ A Home Assistant custom integration (**EMS**) that automatically manages househo
 
 ## Requirements
 
-- Home Assistant 2025.3.0 or later (config subentries).
+- Home Assistant 2026.8.0 or later. 2026.8 reworked the device registry so a device belongs to exactly one config entry and at most one subentry; EMS uses the new `via_device_id` link, which does not exist on earlier cores.
 - A sensor entity providing **solar production** in Watts (required).
 - Optional: house load sensor, net grid power sensor (import positive / export negative), battery SoC sensor, peak-tariff sensor (`on` during peak hours).
 
@@ -115,13 +115,17 @@ Each appliance gets a **Select** entity to change its mode from the HA UI. Modes
 
 ## Entities Created
 
-For each configured appliance EMS creates:
+EMS registers one **EMS** device holding the integration-wide entities, plus **one device per appliance** — named after the appliance and shown as connected via the EMS device. Deleting an appliance removes its device and entities with it.
+
+For each configured appliance EMS creates, on that appliance's own device:
 
 | Entity | Type | Description |
 |---|---|---|
 | `select.<name>_mode` | Select | Runtime mode selector (`partial_solar` / `forced` / `full_solar` / `off_peak` / `unmanaged`) |
 
-These EMS-wide entities are always created:
+> **Upgrading from 0.2.x.** The mode selects move off the EMS device onto their appliance device. Entity ids, names, and history are unchanged, but dashboard cards or automations that target the EMS *device* rather than the entity will need repointing.
+
+These EMS-wide entities are always created on the EMS device:
 
 | Entity | Type | Description |
 |---|---|---|

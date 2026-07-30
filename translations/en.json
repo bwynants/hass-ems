@@ -238,6 +238,7 @@
     },
     "select": {
       "appliance_mode": {
+        "name": "Mode",
         "state": {
           "forced": "Forced",
           "partial_solar": "Partial solar",
