@@ -25,3 +25,27 @@ class EMSEntity(CoordinatorEntity):
             name="EMS",
             manufacturer=MANUFACTURER,
         )
+
+
+class EMSApplianceEntity(EMSEntity):
+    """Base entity for the per-appliance devices.
+
+    Each appliance is a config subentry, and since HA 2026.8 a device belongs to
+    exactly one config entry and at most one subentry — so every appliance gets
+    its own device, hung under the main "EMS" device via ``via_device_id``. The
+    platform must add these entities with ``config_subentry_id`` so the device
+    ends up owned by the subentry and is cleaned up when the appliance is
+    deleted.
+    """
+
+    _appliance_id: str
+    _appliance_name: str
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._appliance_id)},
+            name=self._appliance_name,
+            manufacturer=MANUFACTURER,
+            via_device_id=self.coordinator.main_device_id,
+        )

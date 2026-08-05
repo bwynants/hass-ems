@@ -39,6 +39,9 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
         # Set by __init__.py after construction; the fast quarter-hour demand
         # coordinator, read here for peak-aware control.
         self.demand_coordinator = None
+        # Set by __init__.py after construction; registry id of the parent
+        # "EMS" device, used as via_device_id by the per-appliance devices.
+        self.main_device_id: str | None = None
         # Number of pending update-listener calls to skip (live per-appliance /
         # auto-switching setting changes applied without a full reload). A
         # counter, not a flag: it is only incremented when the update actually

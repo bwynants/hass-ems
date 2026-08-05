@@ -4,30 +4,30 @@ from __future__ import annotations
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from .const import DOMAIN, MODES, DEFAULT_MODE, CONF_RUNTIME_MODE, CONF_RUNTIME_MODES, CONF_NAME, get_appliances
-from .entity import EMSEntity
+from .entity import EMSApplianceEntity
 from .coordinator import SolarApplianceCoordinator
 
 async def async_setup_entry(hass, entry: ConfigEntry, async_add_entities):
     coordinator: SolarApplianceCoordinator = hass.data[DOMAIN][entry.entry_id]
-    entities = [
-        SolarApplianceModeSelect(coordinator, app)
-        for app in get_appliances(entry)
-    ]
-    async_add_entities(entities)
+    # One call per appliance: config_subentry_id is per-call, and it is what
+    # makes both the appliance device and this entity belong to the subentry.
+    for app in get_appliances(entry):
+        async_add_entities(
+            [SolarApplianceModeSelect(coordinator, app)],
+            config_subentry_id=app["subentry_id"],
+        )
 
 
-class SolarApplianceModeSelect(EMSEntity, SelectEntity):
+class SolarApplianceModeSelect(EMSApplianceEntity, SelectEntity):
     """Persistent mode selector for each appliance."""
 
-    # Shared translation key so the mode options are translatable; the entity
-    # name stays per-appliance (user-provided), so has_entity_name is not used.
-    _attr_has_entity_name = False
+    # The appliance device carries the user-provided name, so the entity name is
+    # just the translated "Mode" suffix; the same key translates the options.
     _attr_translation_key = "appliance_mode"
 
     def __init__(self, coordinator: SolarApplianceCoordinator, appliance):
         super().__init__(coordinator)
         self.appliance = appliance
-        self._attr_name = f"{appliance[CONF_NAME]} Mode"
         # The config subentry id: the stable identity for uniqueness/persistence.
         self._appliance_id = appliance["subentry_id"]
         self._attr_unique_id = f"{DOMAIN}_{self._appliance_id}_mode"

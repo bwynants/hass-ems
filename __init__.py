@@ -4,10 +4,10 @@ from queue import SimpleQueue
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 from .coordinator import SolarApplianceCoordinator
 from .demand_coordinator import QuarterlyDemandCoordinator
-from .const import DOMAIN, PLATFORMS
+from .const import DOMAIN, MANUFACTURER, PLATFORMS, SUBENTRY_TYPE_APPLIANCE
 
 # unique_id suffixes of sensors orphaned by past renames:
 # managed_consumption -> managed_consumption_amps,
@@ -86,6 +86,41 @@ def _cleanup_stale_entities(hass: HomeAssistant, entry: ConfigEntry) -> None:
             _PKG_LOGGER.info("Renaming %s -> %s", entity_id, clean_id)
             ent_reg.async_update_entity(entity_id, new_entity_id=clean_id)
 
+    _cleanup_orphaned_appliance_entities(entry, ent_reg)
+
+
+def _cleanup_orphaned_appliance_entities(
+    entry: ConfigEntry, ent_reg: er.EntityRegistry
+) -> None:
+    """Remove mode selects left behind by appliances deleted long ago.
+
+    Before the selects were assigned to their appliance subentry they were not
+    cleaned up when the subentry went away, so old installs can carry selects
+    for appliances that no longer exist. Now that each select belongs to its
+    subentry, Home Assistant removes them itself; this only clears the backlog.
+    """
+    live_ids = {
+        subentry.subentry_id
+        for subentry in entry.subentries.values()
+        if subentry.subentry_type == SUBENTRY_TYPE_APPLIANCE
+    }
+    prefix, suffix = f"{DOMAIN}_", "_mode"
+    for registry_entry in er.async_entries_for_config_entry(ent_reg, entry.entry_id):
+        unique_id = registry_entry.unique_id
+        if registry_entry.domain != "select":
+            continue
+        if not (unique_id.startswith(prefix) and unique_id.endswith(suffix)):
+            continue
+        appliance_id = unique_id[len(prefix) : -len(suffix)]
+        if appliance_id in live_ids:
+            continue
+        _PKG_LOGGER.info(
+            "Removing orphaned appliance entity %s (unique_id %s)",
+            registry_entry.entity_id,
+            unique_id,
+        )
+        ent_reg.async_remove(registry_entry.entity_id)
+
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Set up the dedicated debug log file off the event loop (file open blocks).
@@ -110,6 +145,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Re-run the optimizer immediately when a tariff/off-peak input changes,
     # instead of waiting for the next scheduled poll.
     coordinator.setup_trigger_listeners()
+
+    # Register the parent "EMS" device up front. The entities would create it
+    # anyway via their device_info, but the per-appliance devices need its
+    # registry id for via_device_id before the platforms are forwarded.
+    main_device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, entry.entry_id)},
+        name="EMS",
+        manufacturer=MANUFACTURER,
+    )
+    coordinator.main_device_id = main_device.id
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
