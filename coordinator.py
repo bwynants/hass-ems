@@ -10,9 +10,9 @@ from homeassistant.util import dt as dt_util
 from .const import (
     DOMAIN, CONF_PEAK_TARIFF_SENSOR, CONF_NAME, CONF_VOLTAGE,
     CONF_AUTO_SWITCHING, DEFAULT_AUTO_SWITCHING, DEFAULT_VOLTAGE,
-    CONTROLLER_UPDATE_INTERVAL, get_appliances,
+    CONTROLLER_UPDATE_INTERVAL, CONF_GRID_EXPORT, GRID_STALE_SECONDS, get_appliances,
 )
-from .helpers import read_sensor
+from .helpers import read_sensor, sensor_stale
 from . import control
 from . import ems_core
 
@@ -311,8 +311,19 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
             "peak headroom: %s",
             "off (no demand feature)" if peak_amps is None else f"{peak_amps:.2f} A",
         )
+        # A frozen grid sensor makes the surplus add-back unverifiable; hold
+        # setpoints (no ramp-up) so it can't feed a runaway.
+        grid_stale = sensor_stale(
+            self.hass, config.get(CONF_GRID_EXPORT), GRID_STALE_SECONDS, now
+        )
+        if grid_stale:
+            _LOGGER.warning(
+                "grid sensor stale (>%ds since last report); holding setpoints",
+                GRID_STALE_SECONDS,
+            )
         result = ems_core.optimize(
-            inputs, self.appliance_states, excess_amps, peak_amps, energy, battery, now
+            inputs, self.appliance_states, excess_amps, peak_amps, energy, battery, now,
+            hold_ramp=grid_stale,
         )
         await control.apply_commands(
             self.hass, result.active, result.fixed_amps_commands, inputs, raw_by_uid

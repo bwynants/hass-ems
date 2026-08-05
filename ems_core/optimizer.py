@@ -252,6 +252,7 @@ def optimize(
     energy: EnergyInput,
     battery: BatteryStatus,
     now,
+    hold_ramp: bool = False,
 ) -> OptimizeResult:
     """Allocate the surplus across appliances in priority order.
 
@@ -335,6 +336,14 @@ def optimize(
                 scaled = scaled_amps(min_a, app.max_amps, remaining)
                 if peak_remaining is not None:
                     scaled = max(min(scaled, peak_remaining), min_a)
+
+            # Grid reading frozen (stale source): never let a running appliance's
+            # setpoint climb. The surplus add-back would otherwise feed a runaway
+            # (add-back = setpoint → higher budget → higher setpoint → …) when the
+            # grid can't confirm the extra draw — the same loop the power-sensor
+            # hold guards against. Ramp-DOWN is still allowed.
+            if hold_ramp and state.last_fixed_amps is not None:
+                scaled = min(scaled, state.last_fixed_amps)
 
             # Command the setpoint if a fixed_amps entity is configured.
             commanded = None

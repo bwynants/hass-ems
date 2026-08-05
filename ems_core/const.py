@@ -57,6 +57,11 @@ DEFAULT_COST_PEAK = 0.40
 DEFAULT_COST_OFFPEAK = 0.20
 DEFAULT_GAIN_EXPORT = 0.10
 
+# A grid sensor that hasn't reported for this long is treated as frozen: the
+# optimizer then holds appliance setpoints (no ramp-up), so a stale grid reading
+# can't feed a surplus-add-back runaway for appliances with no power sensor.
+GRID_STALE_SECONDS = 120
+
 # Main coordinator cycle interval (s) and the fixed_amps setpoint quantisation.
 # The setpoint is quantised to FIXED_AMPS_STEP-amp increments, rounded DOWN with
 # the deadband margin: run at step N only once N + margin is available (e.g. with

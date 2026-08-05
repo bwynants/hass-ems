@@ -7,12 +7,20 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from .coordinator import SolarApplianceCoordinator
 from .demand_coordinator import QuarterlyDemandCoordinator
-from .const import DOMAIN, MANUFACTURER, PLATFORMS, SUBENTRY_TYPE_APPLIANCE
+from .const import (
+    DOMAIN, MANUFACTURER, PLATFORMS, SUBENTRY_TYPE_APPLIANCE,
+    CONF_DEBUG_LOG, DEFAULT_DEBUG_LOG,
+)
 
 # unique_id suffixes of sensors orphaned by past renames:
 # managed_consumption -> managed_consumption_amps,
 # managed_consumption_kw -> managed_consumption_power.
 _STALE_UNIQUE_ID_SUFFIXES = ("managed_consumption", "managed_consumption_kw")
+
+# Entry ids whose one-time registry migrations have already run this process, so
+# the idempotent cleanups don't re-scan the registry on every reload. Reset on
+# HA restart (fresh module), which is when a fresh migration pass is wanted.
+_MIGRATED_ENTRIES: set[str] = set()
 
 # Dedicated debug log file, written to the HA config dir so it can be read
 # over the (SMB) config share. Self-contained; remove this block to disable.
@@ -21,13 +29,20 @@ _DEBUG_LOG_FILENAME = "ems_debug.log"
 _DEBUG_HANDLER_FLAG = "_sam_debug_file_handler"
 
 
+# Handler/listener refs so the debug log can be torn down cleanly on unload.
+_DEBUG_QUEUE_HANDLER: QueueHandler | None = None
+_DEBUG_LISTENER: QueueListener | None = None
+
+
 def _setup_debug_file_handler(path: str) -> None:
     """Attach a queue-backed rotating file handler to the integration logger.
 
     The logger gets a QueueHandler (a cheap in-memory put per record); the
     actual file writes and rollovers happen on the QueueListener's own thread,
-    so the event loop never blocks on disk I/O for the debug log.
+    so the event loop never blocks on disk I/O for the debug log. Opt-in — only
+    called when the debug-log config option is enabled.
     """
+    global _DEBUG_QUEUE_HANDLER, _DEBUG_LISTENER
     if getattr(_PKG_LOGGER, _DEBUG_HANDLER_FLAG, False):
         return
     file_handler = RotatingFileHandler(
@@ -45,6 +60,20 @@ def _setup_debug_file_handler(path: str) -> None:
     _PKG_LOGGER.addHandler(queue_handler)
     _PKG_LOGGER.setLevel(logging.DEBUG)
     setattr(_PKG_LOGGER, _DEBUG_HANDLER_FLAG, True)
+    _DEBUG_QUEUE_HANDLER, _DEBUG_LISTENER = queue_handler, listener
+
+
+def _teardown_debug_file_handler() -> None:
+    """Detach the debug handler and stop its listener thread (on unload)."""
+    global _DEBUG_QUEUE_HANDLER, _DEBUG_LISTENER
+    if _DEBUG_QUEUE_HANDLER is not None:
+        _PKG_LOGGER.removeHandler(_DEBUG_QUEUE_HANDLER)
+        _DEBUG_QUEUE_HANDLER = None
+    if _DEBUG_LISTENER is not None:
+        _DEBUG_LISTENER.stop()  # flushes the queue and joins the writer thread
+        _DEBUG_LISTENER = None
+    if getattr(_PKG_LOGGER, _DEBUG_HANDLER_FLAG, False):
+        setattr(_PKG_LOGGER, _DEBUG_HANDLER_FLAG, False)
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -123,14 +152,21 @@ def _cleanup_orphaned_appliance_entities(
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    # Set up the dedicated debug log file off the event loop (file open blocks).
-    await hass.async_add_executor_job(
-        _setup_debug_file_handler, hass.config.path(_DEBUG_LOG_FILENAME)
-    )
+    # Optional per-cycle debug log to ems_debug.log — opt-in (off by default),
+    # set up off the event loop (file open blocks).
+    config = {**entry.data, **entry.options}
+    if config.get(CONF_DEBUG_LOG, DEFAULT_DEBUG_LOG):
+        await hass.async_add_executor_job(
+            _setup_debug_file_handler, hass.config.path(_DEBUG_LOG_FILENAME)
+        )
 
-    # Clean up entities orphaned by past unique_id renames before the
-    # platforms register the current set.
-    _cleanup_stale_entities(hass, entry)
+    # Clean up entities orphaned by past unique_id renames before the platforms
+    # register the current set. Idempotent one-time migrations — run once per
+    # process (ongoing appliance deletions are handled by HA subentry ownership),
+    # so a reload doesn't re-scan the registry.
+    if entry.entry_id not in _MIGRATED_ENTRIES:
+        _cleanup_stale_entities(hass, entry)
+        _MIGRATED_ENTRIES.add(entry.entry_id)
 
     # The fast (~10s) quarter-hour demand coordinator is created first so the
     # main coordinator can read its values for peak-aware control.
@@ -168,4 +204,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id, None)
+        # Stop the debug log's listener thread and detach its handler.
+        await hass.async_add_executor_job(_teardown_debug_file_handler)
     return unload_ok

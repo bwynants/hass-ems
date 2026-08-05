@@ -18,7 +18,8 @@
           "peak_critical_safety": "Critical safety margin (kW)",
           "cost_peak": "Peak import price entity (€/kWh)",
           "cost_offpeak": "Off-peak import price entity (€/kWh)",
-          "gain_export": "Export compensation entity (€/kWh)"
+          "gain_export": "Export compensation entity (€/kWh)",
+          "debug_log": "Write full debug log to ems_debug.log"
         },
         "data_description": {
           "solar_production_sensor": "Sensor reporting solar production in watts (required).",
@@ -61,7 +62,8 @@
           "peak_critical_safety": "Critical safety margin (kW)",
           "cost_peak": "Peak import price entity (€/kWh)",
           "cost_offpeak": "Off-peak import price entity (€/kWh)",
-          "gain_export": "Export compensation entity (€/kWh)"
+          "gain_export": "Export compensation entity (€/kWh)",
+          "debug_log": "Write full debug log to ems_debug.log"
         },
         "data_description": {
           "solar_production_sensor": "Sensor reporting solar production in watts (required).",

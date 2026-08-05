@@ -67,6 +67,8 @@ from .const import (
     CONF_COST_PEAK,
     CONF_COST_OFFPEAK,
     CONF_GAIN_EXPORT,
+    CONF_DEBUG_LOG,
+    DEFAULT_DEBUG_LOG,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -167,6 +169,8 @@ def _global_schema(current: dict | None) -> vol.Schema:
         _suggest_marker(CONF_COST_PEAK, current): SENSOR_ENTITY_SELECTOR,
         _suggest_marker(CONF_COST_OFFPEAK, current): SENSOR_ENTITY_SELECTOR,
         _suggest_marker(CONF_GAIN_EXPORT, current): SENSOR_ENTITY_SELECTOR,
+        # Opt-in per-cycle debug log to ems_debug.log (off by default).
+        _default_marker(CONF_DEBUG_LOG, current, DEFAULT_DEBUG_LOG): bool,
     })
 
 

@@ -269,6 +269,43 @@ def test_off_peak_peak_hours_no_grid_scale_even_at_sundown():
     assert res.fixed_amps_commands[0].value == 6.0
 
 
+def test_hold_ramp_prevents_setpoint_climb():
+    # hold_ramp (grid frozen): a running appliance's setpoint must not climb,
+    # even with a big budget — this is the guard against the surplus-add-back
+    # runaway when the grid can't confirm the extra draw.
+    def run(hold):
+        app = _app(mode=MODE_FORCED, min_amps=6, max_amps=16,
+                   has_fixed_amps=True, fixed_amps_value=10.0, fixed_amps_hold_seconds=0)
+        st = ApplianceState()
+        st.is_on = True
+        st.last_change = T0 - timedelta(seconds=3600)
+        st.last_fixed_amps = 10.0
+        st.last_fixed_amps_change = T0 - timedelta(seconds=3600)
+        return optimize([app], {"a": st}, excess_amps=0.0, peak_amps=20.0,
+                        energy=_energy(), battery=NO_BAT, now=T0, hold_ramp=hold)
+    # Without the guard the big budget ramps the setpoint above 10 A.
+    up = run(False)
+    assert up.fixed_amps_commands and up.fixed_amps_commands[0].value > 10.0
+    # With the guard it's clamped to the held 10 A — no command above it.
+    held = run(True)
+    assert all(c.value <= 10.0 for c in held.fixed_amps_commands)
+
+
+def test_hold_ramp_still_allows_ramp_down():
+    # The guard caps the top, not the bottom: a shrinking budget still throttles.
+    app = _app(mode=MODE_FORCED, min_amps=6, max_amps=16,
+               has_fixed_amps=True, fixed_amps_value=12.0, fixed_amps_hold_seconds=0)
+    st = ApplianceState()
+    st.is_on = True
+    st.last_change = T0 - timedelta(seconds=3600)
+    st.last_fixed_amps = 12.0
+    st.last_fixed_amps_change = T0 - timedelta(seconds=3600)
+    res = optimize([app], {"a": st}, excess_amps=0.0, peak_amps=8.0,
+                   energy=_energy(), battery=NO_BAT, now=T0, hold_ramp=True)
+    assert res.active == ["a"]
+    assert res.fixed_amps_commands[0].value < 12.0
+
+
 def test_soc_strict_blocks():
     app = _app(mode=MODE_FORCED, min_amps=6)
     bat = BatteryStatus(soc=10, min_soc=20, protection_mode=BATTERY_MODE_STRICT)

@@ -71,6 +71,22 @@ def read_value(hass: HomeAssistant, source, default: float) -> float:
     return default if val is None else val
 
 
+def sensor_stale(hass: HomeAssistant, entity_id: str | None, max_age_seconds: float, now) -> bool:
+    """True when the entity exists but hasn't reported within ``max_age_seconds``.
+
+    Detects a *frozen* source — an integration that is still present but no
+    longer updating (``last_reported`` stops advancing). A missing/unset entity
+    is NOT reported stale here (that case is handled by the caller's own
+    fallback, e.g. grid → solar−house); only a present-but-frozen one is.
+    """
+    if not entity_id:
+        return False
+    state = hass.states.get(entity_id)
+    if state is None:
+        return False
+    return (now - state.last_reported).total_seconds() > max_age_seconds
+
+
 def read_number_bounds(
     hass: HomeAssistant, entity_id: str | None
 ) -> tuple[float, float] | None:

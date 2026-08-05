@@ -56,6 +56,7 @@ A Home Assistant custom integration (**EMS**) that automatically manages househo
 | `cost_peak` | ❌ | Sensor/number entity with the import price during peak hours, €/kWh (unset: `0.40`) |
 | `cost_offpeak` | ❌ | Sensor/number entity with the import price during off-peak hours, €/kWh (unset: `0.20`) |
 | `gain_export` | ❌ | Sensor/number entity with the compensation per exported kWh, €/kWh (unset: `0.10`). Read every cycle (dynamic tariffs work); the three prices drive the `off_peak`-mode breakeven decision during peak hours |
+| `debug_log` | ❌ | When enabled, writes the full per-cycle decision trace to `ems_debug.log` in the config dir (2 MB × 3 rotation). **Off by default** — opt-in, since it forces DEBUG logging and disk I/O |
 
 > **Battery protection** is configured per-appliance, not globally. Add an appliance and flag it as a battery (`is_battery`); it then supplies the SoC sensor, threshold (`min_soc`) and protection mode used to block the other appliances. See *Adding Appliances* below.
 
@@ -165,4 +166,5 @@ The coordinator polls every **10 seconds** (`CONTROLLER_UPDATE_INTERVAL`). Hyste
 | Appliance blocked despite sufficient solar | Check `battery_soc_sensor` — SoC may be below `min_soc` |
 | All appliances forced off | Quarter-hour demand reached **Critical** — check `Quarterly Demand Critical` and your `peak_critical_safety` margin |
 | Appliance amps keep dropping | Quarter-hour demand near the **High** limit — the optimizer is throttling to avoid the peak (`Max Power To Peak Limit`) |
+| Setpoints stuck / "grid sensor stale" warning | The `grid_export_sensor` hasn't reported in >120 s (frozen source). The optimizer holds setpoints (no ramp-up) to avoid a runaway; fix the sensor's connection |
 | Options dialog doesn't open | Ensure HA version ≥ 2024.6.0 |

@@ -64,5 +64,10 @@ class SolarApplianceModeSelect(EMSApplianceEntity, SelectEntity):
         runtime_modes = dict(options.get(CONF_RUNTIME_MODES, {}))
         runtime_modes[self._appliance_id] = option
         options[CONF_RUNTIME_MODES] = runtime_modes
-        self.hass.config_entries.async_update_entry(entry, options=options)
+        # Suppress the reload the update listener would otherwise do: a mode
+        # change is applied live via async_refresh, so a full rebuild would only
+        # reset coordinator state for no reason (mirrors the coordinator's own
+        # options writes).
+        if self.hass.config_entries.async_update_entry(entry, options=options):
+            self.coordinator.suppress_reloads += 1
         await self.coordinator.async_refresh()

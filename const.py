@@ -61,6 +61,11 @@ CONF_RUNTIME_MODES = "runtime_modes"
 CONF_RUNTIME_MODE = "runtime_mode"
 CONF_AUTO_SWITCHING = "auto_switching"
 
+# When enabled, write the full per-cycle debug trace to ems_debug.log in the
+# config dir. Off by default — opt-in, since it forces DEBUG logging + disk I/O.
+CONF_DEBUG_LOG = "debug_log"
+DEFAULT_DEBUG_LOG = False
+
 # Appliance configuration
 CONF_NAME = "name"
 CONF_ENTITY_ID = "entity_id"

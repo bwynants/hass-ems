@@ -18,7 +18,8 @@
           "peak_critical_safety": "Kritieke veiligheidsmarge (kW)",
           "cost_peak": "Entiteit prijs afname piektarief (€/kWh)",
           "cost_offpeak": "Entiteit prijs afname daltarief (€/kWh)",
-          "gain_export": "Entiteit injectievergoeding (€/kWh)"
+          "gain_export": "Entiteit injectievergoeding (€/kWh)",
+          "debug_log": "Volledige debuglog naar ems_debug.log schrijven"
         },
         "data_description": {
           "solar_production_sensor": "Sensor die de zonneproductie in watt rapporteert (verplicht).",
@@ -61,7 +62,8 @@
           "peak_critical_safety": "Kritieke veiligheidsmarge (kW)",
           "cost_peak": "Entiteit prijs afname piektarief (€/kWh)",
           "cost_offpeak": "Entiteit prijs afname daltarief (€/kWh)",
-          "gain_export": "Entiteit injectievergoeding (€/kWh)"
+          "gain_export": "Entiteit injectievergoeding (€/kWh)",
+          "debug_log": "Volledige debuglog naar ems_debug.log schrijven"
         },
         "data_description": {
           "solar_production_sensor": "Sensor die de zonneproductie in watt rapporteert (verplicht).",
