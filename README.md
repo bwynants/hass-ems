@@ -132,8 +132,8 @@ These EMS-wide entities are always created on the EMS device:
 | `sensor.energy_management_system_status` | Sensor | Number of currently active appliances; attributes include `excess_amps`, `soc`, `active_appliances`, `auto_switching`, `demand_high`, `demand_critical` |
 | `Managed Consumption` | Sensor (A) | Amps the managed appliances are currently drawing |
 | `Managed Consumption Power` | Sensor (kW) | The same managed draw, in kilowatts |
-| `Spare Amps` | Sensor (A) | Gross surplus budget (signed) the optimizer allocates from |
-| `Spare Power` | Sensor (kW) | The same surplus budget, in kilowatts |
+| `Spare Amps` | Sensor (A) | Available surplus budget, **clamped to ≥ 0** (reads 0 while importing). The optimizer's internal `excess_amps` stays signed — this is the user-facing display only |
+| `Spare Power` | Sensor (kW) | The same surplus budget, in kilowatts (also ≥ 0) |
 | `Auto switching` | Switch | Master enable for automatic appliance control |
 
 When the quarterly-demand sources are configured, these EMS-wide entities are also created (all kW):

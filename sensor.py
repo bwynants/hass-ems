@@ -116,7 +116,13 @@ class MainValueSensor(EMSEntity, SensorEntity):
     def native_value(self):
         if not self.coordinator.data:
             return None
-        return self.coordinator.data.get(self._key)
+        value = self.coordinator.data.get(self._key)
+        # The spare/available budget is a surplus — never show it negative. When
+        # importing, the internal excess is negative (a deficit); the optimizer
+        # keeps that signed value, but the user-facing sensor reads 0 (no spare).
+        if value is not None and self._key in ("excess_amps", "excess_kw"):
+            return max(0.0, value)
+        return value
 
 
 class QuarterlyDemandSensor(EMSEntity, SensorEntity):
