@@ -72,6 +72,12 @@ class QuarterlyDemandCoordinator(DataUpdateCoordinator):
         # DEMAND_STALE_SECONDS the feature reports itself unavailable rather
         # than acting on frozen data.
         self._stale_cycles = 0
+        # True once BOTH required sources have really reported in this runtime.
+        # Until then the derived limits rest on the minimal-peak fallback, and
+        # the optimizer's peak cap bypasses on/off hysteresis entirely — acting
+        # on a fallback limit there would switch a running appliance straight
+        # off at startup. Sticky: a later dropout is bridged by the held values.
+        self._sourced_once = False
 
     async def async_load(self) -> None:
         """Load the persisted month-max history (call once before first refresh)."""
@@ -90,8 +96,13 @@ class QuarterlyDemandCoordinator(DataUpdateCoordinator):
 
     @property
     def feature_active(self) -> bool:
-        """True when the demand sources are configured and data is available."""
-        return bool(self.data and self.data.get("configured"))
+        """True when the sources are configured and have genuinely reported.
+
+        ``sourced`` is what keeps the main coordinator's peak control off until
+        the limits are backed by real readings rather than the minimal-peak
+        fallback. Sensor availability still keys off ``configured`` alone.
+        """
+        return bool(self.data and self.data.get("configured") and self.data.get("sourced"))
 
     def _read_kw(self, entity_id: str | None) -> float | None:
         """Read a sensor value in kW, or None if unavailable."""
@@ -103,6 +114,7 @@ class QuarterlyDemandCoordinator(DataUpdateCoordinator):
         self._critical_on = False
         return {
             "configured": False,
+            "sourced": False,
             "estimate": None,
             "month_max": None,
             "high_limit": None,
@@ -127,6 +139,7 @@ class QuarterlyDemandCoordinator(DataUpdateCoordinator):
             self._last_power_consumed = 0.0
             self._last_month_max = None
             self._stale_cycles = 0
+            self._sourced_once = False
             return self._inactive()
 
         now = dt_util.now()
@@ -143,6 +156,9 @@ class QuarterlyDemandCoordinator(DataUpdateCoordinator):
         month_raw = self._read_kw(month_max_id)
         if month_raw is not None:
             self._last_month_max = month_raw
+        if not self._sourced_once and current_raw is not None and month_raw is not None:
+            self._sourced_once = True
+            _LOGGER.debug("demand sources reported; peak control now active")
 
         # Held values may only bridge SHORT dropouts. Past the stale limit,
         # report the feature unavailable instead of acting on frozen data
@@ -242,6 +258,7 @@ class QuarterlyDemandCoordinator(DataUpdateCoordinator):
 
         return {
             "configured": True,
+            "sourced": self._sourced_once,
             "estimate": round(estimate, 2),
             "month_max": round(month_max, 2),
             "high_limit": round(high_limit, 2),

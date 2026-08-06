@@ -80,6 +80,10 @@ class SolarApplianceStatusSensor(EMSEntity, SensorEntity):
             "auto_switching": data.get("auto_switching"),
             "demand_high": demand.get("high"),
             "demand_critical": demand.get("critical"),
+            # Startup warm-up: control held until the sources report. Exposed so
+            # the reason for a quiet controller is visible without the log.
+            "warming_up": bool(data.get("warming_up")),
+            "warming_up_waiting_on": data.get("warming_up_waiting_on", []),
         }
 
 

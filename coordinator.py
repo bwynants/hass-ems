@@ -4,6 +4,7 @@ from datetime import timedelta
 import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.util import dt as dt_util
@@ -11,12 +12,47 @@ from .const import (
     DOMAIN, CONF_PEAK_TARIFF_SENSOR, CONF_NAME, CONF_VOLTAGE,
     CONF_AUTO_SWITCHING, DEFAULT_AUTO_SWITCHING, DEFAULT_VOLTAGE,
     CONTROLLER_UPDATE_INTERVAL, CONF_GRID_EXPORT, GRID_STALE_SECONDS, get_appliances,
+    CONF_SOLAR_PRODUCTION, CONF_HOUSE_LOAD, CONF_BATTERY_SOC_SENSOR,
+    CONF_ENTITY_ID, CONF_POWER_SENSOR, CONF_FIXED_AMPS, CONF_CONNECTED_SENSOR,
+    CONF_DEMAND_POWER_CONSUMED_SENSOR, MODE_UNMANAGED, STARTUP_GRACE_SECONDS,
 )
-from .helpers import read_sensor, sensor_stale
+from .helpers import read_sensor, sensors_stale, not_ready_entities
 from . import control
 from . import ems_core
 
 _LOGGER = logging.getLogger(__name__)
+
+# Runtime-state persistence. Storing the hysteresis timestamps (not just the
+# on/off flags) is what makes a restart transparent: a short outage leaves the
+# window still running, a long one lets it expire on its own.
+STATE_STORAGE_VERSION = 1
+STATE_SAVE_DELAY_SECONDS = 30
+
+# Every configured entity a control decision reads. The price fields are
+# deliberately absent: they have safe defaults (and may hold a plain number), so
+# they must never hold up the start.
+_GLOBAL_SOURCE_KEYS = (
+    CONF_GRID_EXPORT, CONF_SOLAR_PRODUCTION, CONF_HOUSE_LOAD,
+    CONF_VOLTAGE, CONF_PEAK_TARIFF_SENSOR, CONF_BATTERY_SOC_SENSOR,
+)
+_APPLIANCE_SOURCE_KEYS = (
+    CONF_ENTITY_ID, CONF_POWER_SENSOR, CONF_FIXED_AMPS,
+    CONF_CONNECTED_SENSOR, CONF_BATTERY_SOC_SENSOR,
+)
+
+
+def _parse_dt(value):
+    """Parse a persisted ISO timestamp, tolerating anything unexpected."""
+    if not value:
+        return None
+    return dt_util.parse_datetime(value)
+
+
+def _parse_float(value):
+    try:
+        return float(value) if value is not None else None
+    except (ValueError, TypeError):
+        return None
 
 
 class SolarApplianceCoordinator(DataUpdateCoordinator):
@@ -48,6 +84,87 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
         # changed something (a no-op update fires no listener and would leave a
         # flag latched), and rapid consecutive changes each consume one.
         self.suppress_reloads = 0
+        # Startup warm-up. Control is held until the source sensors report (or
+        # the grace expires); ``_seed_states_from_entities`` then adopts the
+        # appliances' real state as the controller's starting point.
+        self._control_started = False
+        self._warmup_deadline = None
+        self._warmup_logged = False
+        # Runtime-state persistence (survives both a reload and a restart).
+        self._store = Store(hass, STATE_STORAGE_VERSION, f"{DOMAIN}_state_{entry.entry_id}")
+        self._persisted_snapshot: dict | None = None
+
+    # ---- Runtime-state persistence -------------------------------------------
+
+    async def async_load_state(self) -> None:
+        """Restore the persisted per-appliance runtime state.
+
+        Call once before the first refresh. Restoring the hysteresis timestamps
+        means a quick restart resumes mid-window instead of re-arming it, while
+        a long outage lets the window expire on its own.
+        """
+        data = await self._store.async_load()
+        if not data:
+            return
+        for uid, raw in (data.get("appliances") or {}).items():
+            if not isinstance(raw, dict):
+                continue
+            self.appliance_states[uid] = ems_core.ApplianceState(
+                is_on=bool(raw.get("is_on")),
+                last_change=_parse_dt(raw.get("last_change")),
+                last_fixed_amps=_parse_float(raw.get("last_fixed_amps")),
+                last_fixed_amps_change=_parse_dt(raw.get("last_fixed_amps_change")),
+                soc_blocked=bool(raw.get("soc_blocked")),
+            )
+        self._persisted_snapshot = self._state_snapshot()
+        _LOGGER.debug(
+            "restored runtime state for %d appliance(s)", len(self.appliance_states)
+        )
+
+    def _state_snapshot(self) -> dict:
+        """The persistable slice of the runtime state.
+
+        ``excess_history`` is deliberately excluded: after any real outage those
+        samples describe a house that no longer exists, and the averaging code
+        already falls back to the instantaneous excess while it refills.
+        """
+        return {
+            "appliances": {
+                uid: {
+                    "is_on": st.is_on,
+                    "last_change": st.last_change.isoformat() if st.last_change else None,
+                    "last_fixed_amps": st.last_fixed_amps,
+                    "last_fixed_amps_change": (
+                        st.last_fixed_amps_change.isoformat()
+                        if st.last_fixed_amps_change else None
+                    ),
+                    "soc_blocked": st.soc_blocked,
+                }
+                for uid, st in self.appliance_states.items()
+            }
+        }
+
+    def _persist_state(self) -> None:
+        """Queue a debounced save, but only when something actually changed.
+
+        ``async_delay_save`` restarts its timer on every call, so saving
+        unconditionally on each 10 s cycle would postpone the write forever.
+        """
+        snapshot = self._state_snapshot()
+        if snapshot == self._persisted_snapshot:
+            return
+        self._persisted_snapshot = snapshot
+        self._store.async_delay_save(lambda: snapshot, STATE_SAVE_DELAY_SECONDS)
+
+    async def async_save_state_now(self) -> None:
+        """Flush the runtime state immediately (on unload, ahead of a reload).
+
+        A reload constructs a new coordinator that loads the store right away —
+        without this flush it would read back the state from before the change.
+        """
+        snapshot = self._state_snapshot()
+        self._persisted_snapshot = snapshot
+        await self._store.async_save(snapshot)
 
     @property
     def enabled(self) -> bool:
@@ -200,6 +317,76 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
             return None
         return kw * 1000.0 / voltage
 
+    # ---- Startup warm-up ------------------------------------------------------
+
+    def _source_entities(self, config: dict, inputs, raw_by_uid) -> list:
+        """Every configured entity the control decision reads this cycle.
+
+        Unmanaged appliances are excluded — EMS neither reads nor commands
+        them, so a dead sensor on one must not hold up the whole controller.
+        """
+        ids = [config.get(key) for key in _GLOBAL_SOURCE_KEYS]
+        for app in inputs:
+            if app.mode == MODE_UNMANAGED:
+                continue
+            raw = raw_by_uid.get(app.uid) or {}
+            ids.extend(raw.get(key) for key in _APPLIANCE_SOURCE_KEYS)
+        return ids
+
+    def _seed_states_from_entities(self, inputs, now) -> None:
+        """Adopt the appliances' real state as the controller's starting point.
+
+        Without this the controller starts every appliance from ``is_on=False``
+        with no hysteresis timer, so its first cycle commands a running
+        appliance off — and, because ``last_change`` is still None, commands it
+        straight back on once the budget recovers. Seeding the switch state, the
+        setpoint the appliance is actually running at, and the timers makes the
+        first cycle a no-op for an appliance that should keep running; a genuine
+        off decision still has to survive the hysteresis window first.
+        """
+        adopted = []
+        for app in inputs:
+            state = self.appliance_states.setdefault(app.uid, ems_core.ApplianceState())
+            # Physical truth wins over whatever was restored: the appliance may
+            # have been switched by hand while we were down.
+            state.is_on = app.entity_on
+            if state.last_change is None:
+                # Nothing restored (fresh install, or a newly added appliance):
+                # arm the window now so the first decision can't flip it.
+                state.last_change = now
+            if app.has_fixed_amps and app.fixed_amps_value is not None:
+                state.last_fixed_amps = app.fixed_amps_value
+                if state.last_fixed_amps_change is None:
+                    state.last_fixed_amps_change = now
+            adopted.append(f"{app.name}={'on' if app.entity_on else 'off'}")
+        # Force the adopted state out to the store on the next persist.
+        self._persisted_snapshot = None
+        _LOGGER.info(
+            "control starting; adopted appliance state: %s", ", ".join(adopted) or "none"
+        )
+
+    def _warmup_data(self, appliances, inputs, names_by_uid, managed_amps, kw, missing):
+        """Observation-only result while warming up: report, never decide."""
+        on_names = [
+            names_by_uid.get(app.uid, app.uid)
+            for app in inputs
+            if app.mode != MODE_UNMANAGED and app.entity_on
+        ]
+        return {
+            # The budget isn't trustworthy yet. Report unknown rather than a
+            # blank 0, which would read as a genuine "no surplus".
+            "excess_amps": None,
+            "excess_kw": None,
+            "soc": self._last_soc,
+            "active_appliances": on_names,
+            "appliances": appliances,
+            "auto_switching": self.enabled,
+            "managed_amps": round(managed_amps, 2),
+            "managed_power": kw(managed_amps),
+            "warming_up": True,
+            "warming_up_waiting_on": missing,
+        }
+
     async def _async_update_data(self):
         config = {**self.entry.data, **self.entry.options}
         appliances = get_appliances(self.entry)
@@ -234,6 +421,47 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
         # Amps the managed appliances are currently drawing (added back below).
         managed_amps = ems_core.managed_consumption_amps(inputs)
         _LOGGER.debug("managed appliances currently drawing %.2f A", managed_amps)
+
+        # Hold every decision until the source sensors are actually reporting.
+        # At HA start this entry is set up before the inverter/meter/power
+        # integrations have populated, and a blank reading looks exactly like
+        # "no surplus" — which used to switch a running appliance off and then,
+        # once the sensors arrived, back on again.
+        if not self._control_started:
+            if self._warmup_deadline is None:
+                self._warmup_deadline = now + timedelta(seconds=STARTUP_GRACE_SECONDS)
+            missing = not_ready_entities(
+                self.hass, self._source_entities(config, inputs, raw_by_uid)
+            )
+            expired = now >= self._warmup_deadline
+            # Critical demand overrides the wait: the shed protects the monthly
+            # peak and works off the appliances' own on/off state, not the
+            # budget, so it is safe to run on incomplete sources.
+            critical = self._is_demand_critical()
+            if missing and not expired and not critical:
+                if not self._warmup_logged:
+                    self._warmup_logged = True
+                    _LOGGER.info(
+                        "warming up: holding control until these report: %s",
+                        ", ".join(missing),
+                    )
+                # No record_excess here on purpose: blank samples in the
+                # averaging history kept suppressing the run condition for
+                # minutes after the sensors had come good.
+                _LOGGER.debug(
+                    "==== EMS cycle end: warming up (waiting on %s) ====", ", ".join(missing)
+                )
+                return self._warmup_data(
+                    appliances, inputs, names_by_uid, managed_amps, _kw, missing
+                )
+            if missing:
+                _LOGGER.warning(
+                    "starting control with %s still unavailable (%s)",
+                    ", ".join(missing),
+                    "demand critical" if critical else f"warm-up grace of {STARTUP_GRACE_SECONDS}s expired",
+                )
+            self._seed_states_from_entities(inputs, now)
+            self._control_started = True
 
         demand = self._demand_data()
         if demand:
@@ -274,6 +502,7 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
                 # are still drawing — report the real managed draw, not 0.
                 kept, kept_amps = [], managed_amps
                 _LOGGER.warning("demand CRITICAL (auto-switching off; not intervening)")
+            self._persist_state()
             kept_names = [names_by_uid.get(u, u) for u in kept]
             _LOGGER.debug(
                 "==== EMS cycle end: critical (kept at min: %s) ====", kept_names or "none"
@@ -291,6 +520,10 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
             }
 
         if not self.enabled:
+            # Persist anyway: the adopted startup state (and any appliance added
+            # while switched off) must survive to the next restart, or the first
+            # cycle after re-enabling starts from a blank slate again.
+            self._persist_state()
             _LOGGER.debug(
                 "auto-switching OFF -> optimizer skipped; spare=%.2f A", excess_amps
             )
@@ -311,14 +544,25 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
             "peak headroom: %s",
             "off (no demand feature)" if peak_amps is None else f"{peak_amps:.2f} A",
         )
-        # A frozen grid sensor makes the surplus add-back unverifiable; hold
-        # setpoints (no ramp-up) so it can't feed a runaway.
-        grid_stale = sensor_stale(
-            self.hass, config.get(CONF_GRID_EXPORT), GRID_STALE_SECONDS, now
+        # A frozen grid feed makes the surplus add-back unverifiable; hold
+        # setpoints (no ramp-up) so it can't feed a runaway. Both directions of
+        # flow count as proof of life: the net/export sensor and the meter's
+        # import sensor. A signed net sensor derived from a template only writes
+        # state when its value *changes*, so a flat load can leave it quiet for
+        # minutes while the meter behind it is reporting normally — judging one
+        # side alone holds the ramp on a healthy system.
+        grid_stale = sensors_stale(
+            self.hass,
+            (
+                config.get(CONF_GRID_EXPORT),
+                config.get(CONF_DEMAND_POWER_CONSUMED_SENSOR),
+            ),
+            GRID_STALE_SECONDS,
+            now,
         )
         if grid_stale:
             _LOGGER.warning(
-                "grid sensor stale (>%ds since last report); holding setpoints",
+                "grid sensors stale (no import or export report in >%ds); holding setpoints",
                 GRID_STALE_SECONDS,
             )
         result = ems_core.optimize(
@@ -328,6 +572,7 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
         await control.apply_commands(
             self.hass, result.active, result.fixed_amps_commands, inputs, raw_by_uid
         )
+        self._persist_state()
 
         active_names = [names_by_uid.get(u, u) for u in result.active]
         _LOGGER.debug(

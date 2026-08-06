@@ -71,20 +71,58 @@ def read_value(hass: HomeAssistant, source, default: float) -> float:
     return default if val is None else val
 
 
-def sensor_stale(hass: HomeAssistant, entity_id: str | None, max_age_seconds: float, now) -> bool:
-    """True when the entity exists but hasn't reported within ``max_age_seconds``.
+def sensors_stale(hass: HomeAssistant, entity_ids, max_age_seconds: float, now) -> bool:
+    """True when none of the entities has reported within ``max_age_seconds``.
 
     Detects a *frozen* source — an integration that is still present but no
     longer updating (``last_reported`` stops advancing). A missing/unset entity
     is NOT reported stale here (that case is handled by the caller's own
-    fallback, e.g. grid → solar−house); only a present-but-frozen one is.
+    fallback, e.g. grid → solar−house); only present-but-frozen ones are.
+
+    Freshness is taken across *all* the given sources, so the grid picture is
+    judged on both directions of flow: a net/export sensor and the meter's
+    import sensor are typically written by the same feed, and either one still
+    reporting proves that feed is alive. Only when every present source has
+    gone quiet is it treated as frozen.
     """
-    if not entity_id:
+    ages = [
+        (now - state.last_reported).total_seconds()
+        for entity_id in entity_ids
+        if entity_id and (state := hass.states.get(entity_id)) is not None
+    ]
+    if not ages:
         return False
+    return min(ages) > max_age_seconds
+
+
+def entity_ready(hass: HomeAssistant, entity_id) -> bool:
+    """True when a configured entity exists and reports a usable state.
+
+    An unset source is "ready" — there is nothing to wait for. Anything that
+    isn't an entity id (legacy entries stored plain numbers for the price
+    fields) is ready too.
+    """
+    if not entity_id or not isinstance(entity_id, str):
+        return True
     state = hass.states.get(entity_id)
-    if state is None:
-        return False
-    return (now - state.last_reported).total_seconds() > max_age_seconds
+    return state is not None and state.state not in UNAVAILABLE_STATES
+
+
+def not_ready_entities(hass: HomeAssistant, entity_ids) -> list[str]:
+    """The configured entity ids that are missing or unavailable, de-duplicated.
+
+    Used by the startup warm-up gate: while this is non-empty the controller
+    has no trustworthy picture of the house and must not command anything.
+    """
+    seen: set[str] = set()
+    missing: list[str] = []
+    for entity_id in entity_ids:
+        if not entity_id or not isinstance(entity_id, str) or entity_id in seen:
+            continue
+        seen.add(entity_id)
+        if not entity_ready(hass, entity_id):
+            missing.append(entity_id)
+    return missing
 
 
 def read_number_bounds(

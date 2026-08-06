@@ -575,3 +575,55 @@ def test_critical_shed_throttles_then_off():
     assert res.kept_amps == 6
     assert res.fixed_amps_commands == [SetFixedAmps("t", 6.0)]
     assert states["m"].is_on is False and states["p"].is_on is False
+
+
+# ---- Startup state adoption -------------------------------------------------
+# The shell seeds is_on / last_change / last_fixed_amps from the appliances'
+# real state before the first cycle after a restart or reload. These cover what
+# that seeding has to buy: a restart must not power-cycle a running appliance,
+# while a genuine off decision must still get through.
+
+
+def test_seeded_running_appliance_survives_a_bad_first_budget():
+    app = _app(mode=MODE_PARTIAL_SOLAR, entity_on=True, hysteresis_seconds=120,
+               partial_min_excess=1000)
+    states = {"a": ApplianceState(is_on=True, last_change=T0)}
+    res = optimize([app], states, excess_amps=0.0, peak_amps=None,
+                   energy=_energy(), battery=NO_BAT, now=T0 + timedelta(seconds=10))
+    assert res.active == ["a"]
+    assert states["a"].is_on is True
+
+
+def test_seeded_running_appliance_still_switches_off_after_the_window():
+    app = _app(mode=MODE_PARTIAL_SOLAR, entity_on=True, hysteresis_seconds=120,
+               partial_min_excess=1000)
+    states = {"a": ApplianceState(is_on=True, last_change=T0)}
+    res = optimize([app], states, excess_amps=0.0, peak_amps=None,
+                   energy=_energy(), battery=NO_BAT, now=T0 + timedelta(seconds=121))
+    assert res.active == []
+    assert states["a"].is_on is False
+
+
+def test_unseeded_running_appliance_is_dropped_immediately():
+    # The regression this guards: with no runtime state the core starts from
+    # is_on=False and last_change=None, so one blank budget switches a running
+    # appliance off with nothing to damp it — and the recovery back on is
+    # equally undamped. Hence the shell must seed before its first cycle.
+    app = _app(mode=MODE_PARTIAL_SOLAR, entity_on=True, hysteresis_seconds=120,
+               partial_min_excess=1000)
+    states = {}
+    res = optimize([app], states, excess_amps=0.0, peak_amps=None,
+                   energy=_energy(), battery=NO_BAT, now=T0)
+    assert res.active == []
+    assert states["a"].last_change is None  # nothing arms the hysteresis window
+
+
+def test_seeded_setpoint_is_not_rewritten_on_the_first_cycle():
+    app = _app(mode=MODE_FORCED, entity_on=True, has_fixed_amps=True,
+               fixed_amps_value=10.0, measured_amps=10.0, min_amps=6, max_amps=16)
+    states = {"a": ApplianceState(is_on=True, last_change=T0,
+                                  last_fixed_amps=10.0, last_fixed_amps_change=T0)}
+    res = optimize([app], states, excess_amps=10.0, peak_amps=None,
+                   energy=_energy(), battery=NO_BAT, now=T0 + timedelta(seconds=10))
+    assert res.active == ["a"]
+    assert res.fixed_amps_commands == []

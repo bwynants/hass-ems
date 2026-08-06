@@ -57,10 +57,25 @@ DEFAULT_COST_PEAK = 0.40
 DEFAULT_COST_OFFPEAK = 0.20
 DEFAULT_GAIN_EXPORT = 0.10
 
-# A grid sensor that hasn't reported for this long is treated as frozen: the
-# optimizer then holds appliance setpoints (no ramp-up), so a stale grid reading
-# can't feed a surplus-add-back runaway for appliances with no power sensor.
-GRID_STALE_SECONDS = 120
+# How long after startup the controller may wait for its source sensors before
+# it commands anything. Our config entry is set up before the inverter/meter
+# integrations have populated, and deciding from those blank readings switches a
+# running appliance off (and back on once they arrive). Bounded: past the grace
+# the controller starts anyway, so a permanently removed sensor can't freeze it.
+STARTUP_GRACE_SECONDS = 180
+
+# A grid feed with no report from either direction for this long is treated as
+# frozen: the optimizer then holds appliance setpoints (no ramp-up), so a stale
+# grid reading can't feed a surplus-add-back runaway for appliances with no power
+# sensor.
+#
+# Generous on purpose. Meter integrations commonly publish only on *change* (an
+# ESPHome P1 reader with a delta filter, MQTT, a template chain off either), so a
+# genuinely flat house load leaves every grid source quiet while the feed is
+# perfectly healthy — measured quiet gaps of ~7 min overnight. Below ~10 min this
+# threshold mostly reports flat load, not a fault. A feed that really dies goes
+# `unavailable`, which the read fallback and the start-up gate already cover.
+GRID_STALE_SECONDS = 600
 
 # Main coordinator cycle interval (s) and the fixed_amps setpoint quantisation.
 # The setpoint is quantised to FIXED_AMPS_STEP-amp increments, rounded DOWN with

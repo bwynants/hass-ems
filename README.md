@@ -157,6 +157,18 @@ The coordinator polls every **10 seconds** (`CONTROLLER_UPDATE_INTERVAL`). Hyste
 
 ---
 
+## Restart Behaviour
+
+A restart or reload must not disturb a running appliance, so the controller does two things before it decides anything.
+
+**It waits for its sources.** Home Assistant sets this integration up before the inverter, meter and power integrations have populated their entities, and a missing reading is indistinguishable from "no surplus". Until every configured source entity reports — grid, solar, house load, voltage, tariff, SoC, and each managed appliance's switch, power sensor, setpoint and connected sensor — the controller observes without commanding, and without feeding those blank readings into the averaging history. `Spare Amps` reads unknown during this window and the status sensor's `warming_up` attribute is `true`, listing what it is waiting on. The wait is capped at **180 seconds** (`STARTUP_GRACE_SECONDS`): past that it starts anyway and logs a warning naming whatever is still unavailable, so a deleted sensor can't stall control permanently. Critical quarter-hour demand overrides the wait, since shedding works off the appliances' own on/off state rather than the budget.
+
+**It adopts what the appliances are already doing.** Each appliance's on/off state, current setpoint and hysteresis timers are restored from `.storage` and reconciled against the live entities (the physical state wins — an appliance may have been switched by hand while HA was down). A short restart therefore resumes mid-hysteresis-window rather than re-arming it; a long outage lets the window expire naturally. The first cycle after startup is a no-op for an appliance that should keep running, and a genuine off decision still has to outlast the hysteresis window.
+
+Look for `control starting; adopted appliance state: …` in the log to see exactly what was adopted.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Check |
@@ -166,5 +178,7 @@ The coordinator polls every **10 seconds** (`CONTROLLER_UPDATE_INTERVAL`). Hyste
 | Appliance blocked despite sufficient solar | Check `battery_soc_sensor` — SoC may be below `min_soc` |
 | All appliances forced off | Quarter-hour demand reached **Critical** — check `Quarterly Demand Critical` and your `peak_critical_safety` margin |
 | Appliance amps keep dropping | Quarter-hour demand near the **High** limit — the optimizer is throttling to avoid the peak (`Max Power To Peak Limit`) |
-| Setpoints stuck / "grid sensor stale" warning | The `grid_export_sensor` hasn't reported in >120 s (frozen source). The optimizer holds setpoints (no ramp-up) to avoid a runaway; fix the sensor's connection |
+| Setpoints stuck / "grid sensors stale" warning | Neither the `grid_export_sensor` nor the `demand_power_consumed_sensor` has reported in >600 s (frozen feed). The optimizer holds setpoints (no ramp-up) to avoid a runaway; fix the sensor's connection. Both directions of flow are checked, and the window is deliberately wide: meters that publish only on change (ESPHome with a delta filter, MQTT, a template chain off either) go quiet for minutes on a flat load while perfectly healthy. A feed that really dies goes `unavailable` instead, which the read fallback and the start-up gate handle |
+| Nothing happens for a while after a restart | Expected — the controller is warming up. Check the status sensor's `warming_up_waiting_on` attribute for the source entities it is still waiting on |
+| Appliance stops and restarts after every HA restart | Should no longer happen; if it does, enable the debug log and check for `control starting; adopted appliance state: …` — the state next to the appliance's name is what the controller adopted |
 | Options dialog doesn't open | Ensure HA version ≥ 2024.6.0 |
