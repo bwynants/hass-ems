@@ -75,3 +75,25 @@ def test_decide_allows_change_after_hold_window():
     now = T0 + timedelta(seconds=121)
     d = decide(6.75, 6, 16, 6.0, T0, now, 120, current_entity_value=6.0)
     assert d.write_value == 6.5 and d.effective == 6.5
+
+
+# --- per-appliance step: the "ampere to use" entity's own granularity --------
+
+
+def test_step_target_honours_a_finer_step():
+    # A 0.1 A entity: first set rounds down to a 0.1 increment with a 0.05
+    # margin (deadband = half a step), instead of collapsing onto 0.5 A.
+    assert step_target(6.83, 6, 16, None, deadband=0.05, step=0.1) == 6.7
+    assert step_target(6.85, 6, 16, None, deadband=0.05, step=0.1) == 6.8
+
+
+def test_finer_step_holds_and_steps_by_one_increment():
+    # Holding 7.0 with a 0.1 step: band is [6.95, 7.15).
+    assert step_target(7.14, 6, 16, 7.0, deadband=0.05, step=0.1) == 7.0
+    assert step_target(7.15, 6, 16, 7.0, deadband=0.05, step=0.1) == 7.1
+    assert step_target(6.94, 6, 16, 7.0, deadband=0.05, step=0.1) == 6.9
+
+
+def test_finer_step_decide_writes_the_fine_value():
+    d = decide(6.83, 6, 16, None, None, T0, 120, None, deadband=0.05, step=0.1)
+    assert d.write_value == 6.7 and d.effective == 6.7

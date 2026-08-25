@@ -82,7 +82,10 @@ GRID_STALE_SECONDS = 600
 # the deadband margin: run at step N only once N + margin is available (e.g. with
 # a 0.5 A step and 0.25 A deadband, 6.8 -> 6.5, and it steps up to 7.0 only at
 # 7.25). The margin also acts as a deadband against flicker. A finer step suits
-# chargers with sub-amp (mA) current regulation, e.g. Peblar.
+# chargers with sub-amp (mA) current regulation, e.g. Peblar — which is why
+# these are only the FALLBACKS: an appliance's "ampere to use" entity publishes
+# its own ``step``, and that is what its setpoint is quantised to (with the
+# deadband at half of it, the same ratio as the two defaults below).
 CONTROLLER_UPDATE_INTERVAL = 10
 FIXED_AMPS_DEADBAND = 0.25
 FIXED_AMPS_STEP = 0.5

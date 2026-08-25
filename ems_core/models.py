@@ -10,7 +10,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from .const import APPLIANCE_HISTORY_MAXLEN
+from .const import APPLIANCE_HISTORY_MAXLEN, FIXED_AMPS_STEP
 
 
 @dataclass
@@ -49,6 +49,10 @@ class ApplianceInput:
     # ``measured_amps`` is None (sensor unavailable), the surplus add-back must
     # NOT fall back to the fixed_amps setpoint — see energy.actual_amps.
     has_power_sensor: bool = False
+    # Granularity of this appliance's setpoint, taken from the "ampere to use"
+    # entity's own ``step``. The default only applies when that entity doesn't
+    # publish one.
+    fixed_amps_step: float = FIXED_AMPS_STEP
     # Battery-only fields (populated when is_battery is True).
     battery_soc: float | None = None
     battery_min_soc: float | None = None

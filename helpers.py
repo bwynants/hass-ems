@@ -149,6 +149,27 @@ def read_number_bounds(
         return None
 
 
+def read_number_step(hass: HomeAssistant, entity_id: str | None) -> float | None:
+    """Return a number/input_number entity's ``step`` attribute, or ``None``.
+
+    Companion to :func:`read_number_bounds`: the "ampere to use" entity knows the
+    granularity the appliance actually accepts (a charger with mA current
+    regulation publishes a much finer step than the 0.5 A default), so the
+    setpoint is quantised to it. ``None`` when unset, unavailable, or the step
+    isn't a usable positive number, so the caller falls back to the default.
+    """
+    if not entity_id:
+        return None
+    state = hass.states.get(entity_id)
+    if state is None or state.state in UNAVAILABLE_STATES:
+        return None
+    try:
+        step = float(state.attributes.get("step"))
+    except (ValueError, TypeError):
+        return None
+    return step if step > 0 else None
+
+
 def read_binary(
     hass: HomeAssistant,
     entity_id: str | None,

@@ -27,11 +27,11 @@ from .const import (
     DEFAULT_FIXED_AMPS_HYSTERESIS_SECONDS, DEFAULT_PARTIAL_MIN_EXCESS,
     DEFAULT_MIN_SOC, DEFAULT_BATTERY_MODE, DEFAULT_MODE,
     DEFAULT_COST_PEAK, DEFAULT_COST_OFFPEAK, DEFAULT_GAIN_EXPORT,
-    MODE_UNMANAGED,
+    FIXED_AMPS_STEP, MODE_UNMANAGED,
 )
 from .helpers import (
     read_sensor, read_sensor_optional, read_binary, read_value,
-    read_number_bounds, UNAVAILABLE_STATES,
+    read_number_bounds, read_number_step, UNAVAILABLE_STATES,
 )
 from .ems_core import ApplianceInput, EnergyInput
 
@@ -119,6 +119,10 @@ def build_appliance_inputs(hass, appliances, coordinator, voltage: float):
         else:
             min_amps = app.get(CONF_MIN_AMPS, DEFAULT_MIN_AMPS)
             max_amps = app.get(CONF_MAX_AMPS, DEFAULT_MAX_AMPS)
+        # ...and its own step is the setpoint granularity, so EMS writes values
+        # the appliance can actually take (a 0.1 A charger is stepped in 0.1 A,
+        # not rounded down to the 0.5 A default).
+        step = read_number_step(hass, fixed_entity) if fixed_entity else None
         # Our own last on/off decision — the fallback for an unavailable
         # controlled entity.
         runtime = coordinator.appliance_states.get(uid)
@@ -149,6 +153,7 @@ def build_appliance_inputs(hass, appliances, coordinator, voltage: float):
                 fixed_amps_hold_seconds=app.get(
                     CONF_FIXED_AMPS_HYSTERESIS_SECONDS, DEFAULT_FIXED_AMPS_HYSTERESIS_SECONDS
                 ),
+                fixed_amps_step=step if step is not None else FIXED_AMPS_STEP,
                 partial_min_excess=app.get(CONF_PARTIAL_MIN_EXCESS, DEFAULT_PARTIAL_MIN_EXCESS),
                 hysteresis_seconds=app.get(CONF_HYSTERESIS_ON_OFF_SECONDS, DEFAULT_HYSTERESIS),
                 averaging_window_seconds=app.get(CONF_AVERAGING_WINDOW, DEFAULT_AVERAGING),

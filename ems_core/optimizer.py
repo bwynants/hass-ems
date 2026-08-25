@@ -352,6 +352,12 @@ def optimize(
                     scaled, min_a, app.max_amps,
                     state.last_fixed_amps, state.last_fixed_amps_change,
                     now, app.fixed_amps_hold_seconds, app.fixed_amps_value,
+                    # The appliance's own step, with the deadband kept at half a
+                    # step: the same relationship the defaults have (0.25 of
+                    # 0.5), so a finer-grained appliance actually tracks finely
+                    # instead of sitting in a band wider than its own step.
+                    deadband=app.fixed_amps_step / 2,
+                    step=app.fixed_amps_step,
                 )
                 if decision.write_value is not None:
                     state.last_fixed_amps = decision.write_value

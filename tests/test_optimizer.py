@@ -627,3 +627,22 @@ def test_seeded_setpoint_is_not_rewritten_on_the_first_cycle():
                    energy=_energy(), battery=NO_BAT, now=T0 + timedelta(seconds=10))
     assert res.active == ["a"]
     assert res.fixed_amps_commands == []
+
+
+def test_setpoint_uses_the_appliances_own_step():
+    # A 0.1 A "ampere to use" entity: 7.85 A of budget is run at 7.8 (quantised
+    # down by the 0.05 A half-step deadband), keeping the 0.3 A the default step
+    # would have thrown away.
+    app = _app(mode=MODE_FORCED, has_fixed_amps=True, fixed_amps_value=6,
+               fixed_amps_step=0.1)
+    res = optimize([app], {}, excess_amps=7.85, peak_amps=None,
+                   energy=_energy(), battery=NO_BAT, now=T0)
+    assert res.fixed_amps_commands == [SetFixedAmps("a", 7.8)]
+
+
+def test_setpoint_falls_back_to_the_default_step():
+    # Same budget, no step from the entity -> the 0.5 A default applies.
+    app = _app(mode=MODE_FORCED, has_fixed_amps=True, fixed_amps_value=6)
+    res = optimize([app], {}, excess_amps=7.85, peak_amps=None,
+                   energy=_energy(), battery=NO_BAT, now=T0)
+    assert res.fixed_amps_commands == [SetFixedAmps("a", 7.5)]
