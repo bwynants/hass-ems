@@ -176,6 +176,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     coordinator = SolarApplianceCoordinator(hass, entry)
     coordinator.demand_coordinator = demand_coordinator
+    # Restore the appliances' runtime state (on/off, hysteresis timers, current
+    # setpoints) BEFORE the first refresh, so that cycle starts from what the
+    # appliances were actually doing instead of from a blank slate.
+    await coordinator.async_load_state()
     await coordinator.async_config_entry_first_refresh()
 
     # Re-run the optimizer immediately when a tariff/off-peak input changes,
@@ -201,8 +205,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
+        # Flush the runtime state now: a reload builds a new coordinator that
+        # loads the store immediately, and a pending delayed save would lose
+        # the last few minutes of hysteresis/setpoint state.
+        if coordinator is not None:
+            await coordinator.async_save_state_now()
         hass.data[DOMAIN].pop(entry.entry_id, None)
         # Stop the debug log's listener thread and detach its handler.
         await hass.async_add_executor_job(_teardown_debug_file_handler)
