@@ -51,24 +51,52 @@ def test_forced_additive_budget_uses_solar_on_top_of_grid():
     assert res.fixed_amps_commands[0].value == 16.0
 
 
-def test_non_forced_throttled_to_peak_headroom():
-    # partial_solar with big solar but tiny peak headroom => throttled to headroom
+def test_solar_funded_draw_not_capped_by_peak_headroom():
+    # partial_solar with a big surplus and a tiny peak headroom: the demand
+    # ceiling is a GRID-import allowance, so surplus-funded draw must scale past
+    # it (the meter reads export — nothing is being imported to limit).
     app = _app(mode=MODE_PARTIAL_SOLAR, has_fixed_amps=True, fixed_amps_value=6,
-               min_amps=6, max_amps=16, partial_min_excess=0)
+               min_amps=6, max_amps=32, partial_min_excess=0)
     states = {}
     res = optimize([app], states, excess_amps=16.0, peak_amps=8.0,
                    energy=_energy(), battery=NO_BAT, now=T0)
     assert res.active == ["a"]
-    # scaled(16 clamped to max 16) then min(16, peak 8)=8; first write rounds
-    # 8 down-with-margin to 7.5 (0.5 A step, 0.25 A deadband: 8 - 0.25 -> 7.5).
-    assert res.fixed_amps_commands[0].value == 7.5
+    # scaled = 16 (surplus, under max 32) -> well above the 8 A headroom; first
+    # write quantises down-with-margin (0.5 A step, 0.25 A deadband) to 15.5.
+    assert res.fixed_amps_commands[0].value == 15.5
 
 
-def test_peak_headroom_sheds_when_below_min():
-    # headroom 3A < min 6A => appliance cannot run
+def test_solar_mode_runs_when_grid_headroom_below_min():
+    # Headroom 3 A < min 6 A, but 16 A of surplus covers the appliance outright.
+    # Pre-fix this was switched off on the headroom alone.
     app = _app(mode=MODE_PARTIAL_SOLAR, min_amps=6, partial_min_excess=0)
     states = {}
     res = optimize([app], states, excess_amps=16.0, peak_amps=3.0,
+                   energy=_energy(), battery=NO_BAT, now=T0)
+    assert res.active == ["a"]
+
+
+def test_peak_headroom_sheds_when_below_min():
+    # No surplus, so the whole draw would come off the grid: headroom 3 A <
+    # min 6 A => the appliance cannot run.
+    app = _app(mode=MODE_PARTIAL_SOLAR, min_amps=6, partial_min_excess=0)
+    states = {}
+    res = optimize([app], states, excess_amps=0.0, peak_amps=3.0,
+                   energy=_energy(), battery=NO_BAT, now=T0)
+    assert res.active == []
+
+
+def test_min_amps_floor_grid_topup_bounded_by_headroom():
+    # Surplus (0.2 A) below min_amps: `scaled_amps` floors the setpoint at min,
+    # so the appliance really does import the 5.8 A difference. The gate bounds
+    # exactly that top-up — solar 0.2 + headroom 5.9 = 6.1 >= min 6, so it runs.
+    app = _app(mode=MODE_PARTIAL_SOLAR, min_amps=6, partial_min_excess=0)
+    res = optimize([app], {}, excess_amps=0.2, peak_amps=5.9,
+                   energy=_energy(), battery=NO_BAT, now=T0)
+    assert res.active == ["a"]
+    # Same surplus, less headroom: 0.2 + 5.0 = 5.2 < 6 -> the grid can't fund
+    # the floor, so it stays off.
+    res = optimize([app], {}, excess_amps=0.2, peak_amps=5.0,
                    energy=_energy(), battery=NO_BAT, now=T0)
     assert res.active == []
 
