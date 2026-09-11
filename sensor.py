@@ -76,6 +76,8 @@ class SolarApplianceStatusSensor(EMSEntity, SensorEntity):
         return {
             "excess_amps": data.get("excess_amps"),
             "active_appliances": data.get("active_appliances", []),
+            # Appliances currently force-charged by the car-SoC rule.
+            "forced_appliances": data.get("forced_appliances", []),
             "auto_switching": data.get("auto_switching"),
             "demand_high": demand.get("high"),
             "demand_critical": demand.get("critical"),

@@ -2,9 +2,11 @@
 import logging
 from datetime import datetime, timedelta
 
-from ems_core.optimizer import optimize, critical_shed, record_excess
+from ems_core.optimizer import (
+    optimize, critical_shed, record_excess, force_charge_active, effective_mode,
+)
 from ems_core.models import (
-    ApplianceInput, ApplianceState, EnergyInput, SetFixedAmps,
+    ApplianceInput, ApplianceState, EnergyInput, SetFixedAmps, OptimizeResult,
 )
 from ems_core.const import (
     MODE_FORCED, MODE_PARTIAL_SOLAR, MODE_FULL_SOLAR, MODE_OFF_PEAK, MODE_UNMANAGED,
@@ -595,3 +597,180 @@ def test_setpoint_falls_back_to_the_default_step():
     res = optimize([app], {}, excess_amps=7.85, peak_amps=None,
                    energy=_energy(), now=T0)
     assert res.fixed_amps_commands == [SetFixedAmps("a", 7.5)]
+
+
+# ---------------------------------------------------------------------------
+# Car-SoC force-charge override (EV chargers)
+# ---------------------------------------------------------------------------
+
+def test_force_charge_pure_rule():
+    ev = dict(mode=MODE_PARTIAL_SOLAR, soc=30, force_charge_below_soc=50)
+    assert force_charge_active(_app(**ev)) is True
+    assert effective_mode(_app(**ev)) == MODE_FORCED
+    # Not plugged in -> the car's SoC is irrelevant.
+    assert force_charge_active(_app(**{**ev, "connected": False})) is False
+    # No SoC reading (sensor unavailable / no car) -> fail safe, no forcing.
+    assert force_charge_active(_app(**{**ev, "soc": None})) is False
+    # No threshold (appliance has no SoC sensor configured) -> feature off.
+    assert force_charge_active(_app(**{**ev, "force_charge_below_soc": None})) is False
+    # Release exactly at the threshold; strictly below forces.
+    assert force_charge_active(_app(**{**ev, "soc": 50})) is False
+    assert force_charge_active(_app(**{**ev, "soc": 49.9})) is True
+    # Threshold 0 (the default) can never force.
+    assert force_charge_active(_app(**{**ev, "soc": 0, "force_charge_below_soc": 0})) is False
+    # Unmanaged is never overridden.
+    unmanaged = _app(**{**ev, "mode": MODE_UNMANAGED})
+    assert force_charge_active(unmanaged) is False
+    assert effective_mode(unmanaged) == MODE_UNMANAGED
+
+
+def test_force_charge_partial_solar_runs_on_grid():
+    # Importing (surplus -3 A): partial_solar would stay off, but the car is
+    # plugged in below its threshold -> driven as forced, charges from the grid.
+    app = _app(mode=MODE_PARTIAL_SOLAR, min_amps=6, soc=30, force_charge_below_soc=50)
+    states = {}
+    res = optimize([app], states, excess_amps=-3.0, peak_amps=20.0,
+                   energy=_energy(), now=T0)
+    assert res.active == ["a"]
+    assert res.forced == ["a"]
+    # Control: same appliance with a charged car -> the mode's own gate applies.
+    full = _app(mode=MODE_PARTIAL_SOLAR, min_amps=6, soc=90, force_charge_below_soc=50)
+    res2 = optimize([full], {}, excess_amps=-3.0, peak_amps=20.0,
+                    energy=_energy(), now=T0)
+    assert res2.active == []
+    assert res2.forced == []
+
+
+def test_force_charge_full_solar_ignores_average_gate():
+    # full_solar with a starved rolling average would never start; the override
+    # must reach the run condition too (not only the budget path).
+    app = _app(mode=MODE_FULL_SOLAR, min_amps=6, soc=30, force_charge_below_soc=50)
+    st = ApplianceState()
+    st.excess_history.extend([0.0] * 18)
+    states = {"a": st}
+    res = optimize([app], states, excess_amps=0.0, peak_amps=20.0,
+                   energy=_energy(), now=T0)
+    assert res.active == ["a"]
+    assert res.forced == ["a"]
+
+
+def test_force_charge_uses_additive_budget():
+    # Mirror of test_forced_additive_budget_uses_solar_on_top_of_grid, but the
+    # appliance is partial_solar and only forced by the car SoC: the budget path
+    # must use the effective mode, so solar 4 A + grid headroom (16 - 1) A -> 16.
+    app = _app(mode=MODE_PARTIAL_SOLAR, has_fixed_amps=True, fixed_amps_value=6,
+               max_amps=16, soc=30, force_charge_below_soc=50)
+    res = optimize([app], {}, excess_amps=4.0, peak_amps=16.0,
+                   energy=_energy(), now=T0)
+    assert res.active == ["a"]
+    assert res.fixed_amps_commands[0].value == 16.0
+    # Without the override the same surplus scales on solar only: 4 A < 6 A min
+    # -> floors at min_amps.
+    plain = _app(mode=MODE_PARTIAL_SOLAR, has_fixed_amps=True, fixed_amps_value=6,
+                 max_amps=16, partial_min_excess=0)
+    res2 = optimize([plain], {}, excess_amps=4.0, peak_amps=16.0,
+                    energy=_energy(), now=T0)
+    assert res2.fixed_amps_commands[0].value == 6.0
+
+
+def test_force_charge_still_respects_peak_gate():
+    # Forcing never buys a way past the quarter-hour cap: with 3 A of grid
+    # headroom the 6 A minimum is unreachable -> off, but still reported forced
+    # ("EMS wants to force-charge; the peak limit is what blocks it").
+    app = _app(mode=MODE_PARTIAL_SOLAR, min_amps=6, soc=30, force_charge_below_soc=50)
+    states = {}
+    res = optimize([app], states, excess_amps=0.0, peak_amps=3.0,
+                   energy=_energy(), now=T0)
+    assert res.active == []
+    assert res.forced == ["a"]
+    assert states["a"].is_on is False
+
+
+def test_force_charge_not_when_unplugged():
+    app = _app(mode=MODE_PARTIAL_SOLAR, connected=False, soc=10, force_charge_below_soc=50)
+    res = optimize([app], {}, excess_amps=-3.0, peak_amps=20.0,
+                   energy=_energy(), now=T0)
+    assert res.active == []
+    assert res.forced == []
+
+
+def test_force_charge_not_when_soc_unknown():
+    app = _app(mode=MODE_PARTIAL_SOLAR, soc=None, force_charge_below_soc=50)
+    res = optimize([app], {}, excess_amps=-3.0, peak_amps=20.0,
+                   energy=_energy(), now=T0)
+    assert res.active == []
+    assert res.forced == []
+
+
+def test_force_charge_not_when_threshold_unset():
+    app = _app(mode=MODE_PARTIAL_SOLAR, soc=10, force_charge_below_soc=None)
+    res = optimize([app], {}, excess_amps=-3.0, peak_amps=20.0,
+                   energy=_energy(), now=T0)
+    assert res.active == []
+    assert res.forced == []
+
+
+def test_force_charge_releases_at_threshold():
+    states = {}
+    low = _app(mode=MODE_PARTIAL_SOLAR, min_amps=6, hysteresis_seconds=0,
+               soc=49, force_charge_below_soc=50)
+    r1 = optimize([low], states, excess_amps=-3.0, peak_amps=20.0,
+                  energy=_energy(), now=T0)
+    assert r1.active == ["a"] and r1.forced == ["a"]
+    # Next cycle the car reached the threshold: override released and, still
+    # importing, the partial_solar gate switches it off.
+    done = _app(mode=MODE_PARTIAL_SOLAR, min_amps=6, hysteresis_seconds=0,
+                soc=50, force_charge_below_soc=50)
+    r2 = optimize([done], states, excess_amps=-3.0, peak_amps=20.0,
+                  energy=_energy(), now=T0 + timedelta(seconds=10))
+    assert r2.forced == []
+    assert r2.active == []
+
+
+def test_force_charge_never_overrides_unmanaged():
+    app = _app(mode=MODE_UNMANAGED, entity_on=True, has_fixed_amps=True,
+               fixed_amps_value=6, soc=5, force_charge_below_soc=50)
+    res = optimize([app], {}, excess_amps=-3.0, peak_amps=20.0,
+                   energy=_energy(), now=T0)
+    assert res.active == []
+    assert res.forced == []
+    assert res.fixed_amps_commands == []
+
+
+def test_force_charge_without_demand_feature_runs_at_min():
+    # No quarterly-demand sensors (peak_amps None): forced is not additive, so a
+    # negative surplus floors the setpoint at min_amps — same as `forced` today.
+    app = _app(mode=MODE_PARTIAL_SOLAR, min_amps=6, has_fixed_amps=True,
+               fixed_amps_value=6, soc=30, force_charge_below_soc=50)
+    res = optimize([app], {}, excess_amps=-3.0, peak_amps=None,
+                   energy=_energy(), now=T0)
+    assert res.active == ["a"]
+    assert res.forced == ["a"]
+    assert res.fixed_amps_commands == [SetFixedAmps("a", 6.0)]
+
+
+def test_forced_list_defaults_empty():
+    assert OptimizeResult(active=[], decided_amps=0.0, fixed_amps_commands=[]).forced == []
+    app = _app(mode=MODE_FORCED)
+    res = optimize([app], {}, excess_amps=10.0, peak_amps=None,
+                   energy=_energy(), now=T0)
+    assert res.active == ["a"]
+    assert res.forced == []
+
+
+def test_force_charge_logs_transitions_once(caplog):
+    states = {}
+    low = _app(mode=MODE_PARTIAL_SOLAR, soc=30, force_charge_below_soc=50)
+    high = _app(mode=MODE_PARTIAL_SOLAR, soc=60, force_charge_below_soc=50)
+    with caplog.at_level(logging.INFO, logger="ems_core.optimizer"):
+        optimize([low], states, excess_amps=-3.0, peak_amps=20.0, energy=_energy(), now=T0)
+        optimize([low], states, excess_amps=-3.0, peak_amps=20.0, energy=_energy(),
+                 now=T0 + timedelta(seconds=10))
+        optimize([high], states, excess_amps=-3.0, peak_amps=20.0, energy=_energy(),
+                 now=T0 + timedelta(seconds=20))
+        optimize([high], states, excess_amps=-3.0, peak_amps=20.0, energy=_energy(),
+                 now=T0 + timedelta(seconds=30))
+    forcing = [r for r in caplog.records if "forcing grid charge" in r.getMessage()]
+    released = [r for r in caplog.records if "force charge released" in r.getMessage()]
+    assert len(forcing) == 1
+    assert len(released) == 1

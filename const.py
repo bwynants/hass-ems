@@ -19,7 +19,9 @@ DOMAIN = "energy_management_system"
 MANUFACTURER = "Energy Management System"
 SUBENTRY_TYPE_APPLIANCE = "appliance"
 
-PLATFORMS = [Platform.SWITCH, Platform.SENSOR, Platform.SELECT, Platform.BINARY_SENSOR]
+PLATFORMS = [
+    Platform.SWITCH, Platform.SENSOR, Platform.SELECT, Platform.BINARY_SENSOR, Platform.NUMBER,
+]
 
 
 def get_appliances(entry: ConfigEntry) -> list[dict[str, Any]]:
@@ -74,6 +76,14 @@ CONF_FIXED_AMPS_HYSTERESIS_SECONDS = "fixed_amps_hysteresis_seconds"
 CONF_POWER_SENSOR = "power_sensor"
 CONF_PARTIAL_MIN_EXCESS = "partial_min_excess"
 CONF_CONNECTED_SENSOR = "connected_sensor"
+# EV charger: the car's state-of-charge sensor (%). Its presence is what makes
+# an appliance an EV charger. Deliberately NOT the battery-era
+# "battery_soc_sensor"/"min_soc" keys: old subentries still carry those in
+# storage and must not be reinterpreted as this feature.
+CONF_EV_SOC_SENSOR = "ev_soc_sensor"
+# Per-appliance runtime setting (number entity), persisted in the subentry like
+# CONF_RUNTIME_MODE: force charging while the car's SoC is below this (%).
+CONF_FORCE_CHARGE_BELOW_SOC = "force_charge_below_soc"
 
 # Hysteresis
 CONF_HYSTERESIS_ON_OFF_SECONDS = "hysteresis_on_off_seconds"

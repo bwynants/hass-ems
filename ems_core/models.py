@@ -49,6 +49,12 @@ class ApplianceInput:
     # entity's own ``step``. The default only applies when that entity doesn't
     # publish one.
     fixed_amps_step: float = FIXED_AMPS_STEP
+    # EV charger: the car's state of charge (%) and the per-appliance threshold
+    # below which a plugged-in car is charged as `forced`. Both None when the
+    # appliance has no SoC sensor; ``soc`` is also None when the sensor is
+    # unavailable/unknown (no car plugged in) — either disables the override.
+    soc: float | None = None
+    force_charge_below_soc: float | None = None
 
 
 @dataclass
@@ -68,6 +74,13 @@ class ApplianceState:
     # (current budget covers, sustained average doesn't) — used to log the
     # reason once on entry instead of every cycle.
     full_solar_spike: bool = False
+    # True while the car-SoC force-charge override is active — used to log the
+    # transitions once instead of every cycle.
+    force_charging: bool = False
+    # Last real car SoC reading, held across a sensor dropout while the car
+    # stays plugged in (cloud car sensors go `unknown` intermittently); cleared
+    # on disconnect so it can never carry over to another car.
+    last_soc: float | None = None
 
 
 @dataclass
@@ -111,6 +124,9 @@ class OptimizeResult:
     active: list[str]
     decided_amps: float
     fixed_amps_commands: list[SetFixedAmps]
+    # Uids whose mode the car-SoC rule overrode to `forced` this cycle —
+    # reported even when the peak gate then kept the appliance off.
+    forced: list[str] = field(default_factory=list)
 
 
 @dataclass

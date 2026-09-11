@@ -18,6 +18,7 @@ from .const import (
     CONF_MIN_AMPS, CONF_MAX_AMPS, CONF_FIXED_AMPS, CONF_FIXED_AMPS_HYSTERESIS_SECONDS,
     CONF_POWER_SENSOR, CONF_PARTIAL_MIN_EXCESS, CONF_CONNECTED_SENSOR,
     CONF_HYSTERESIS_ON_OFF_SECONDS, CONF_AVERAGING_WINDOW,
+    CONF_EV_SOC_SENSOR, CONF_FORCE_CHARGE_BELOW_SOC, DEFAULT_FORCE_CHARGE_BELOW_SOC,
     CONF_RUNTIME_MODE, CONF_RUNTIME_MODES,
     CONF_COST_PEAK, CONF_COST_OFFPEAK, CONF_GAIN_EXPORT,
     DEFAULT_MIN_AMPS, DEFAULT_MAX_AMPS, DEFAULT_PRIORITY, DEFAULT_HYSTERESIS,
@@ -41,6 +42,23 @@ def _resolve_mode(coordinator, app: dict) -> str:
     return coordinator.get_appliance_persistent_setting(
         app["subentry_id"], CONF_RUNTIME_MODE, CONF_RUNTIME_MODES, DEFAULT_MODE,
     )
+
+
+def _resolve_force_charge_below_soc(coordinator, app: dict) -> float | None:
+    """The car-SoC force-charge threshold, or None for a non-EV appliance.
+
+    Only appliances with a SoC sensor have the number entity that sets this;
+    for the rest the feature doesn't exist (None), so the core never forces.
+    """
+    if not app.get(CONF_EV_SOC_SENSOR):
+        return None
+    value = coordinator.get_appliance_persistent_setting(
+        app["subentry_id"], CONF_FORCE_CHARGE_BELOW_SOC, None, DEFAULT_FORCE_CHARGE_BELOW_SOC,
+    )
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(DEFAULT_FORCE_CHARGE_BELOW_SOC)
 
 
 def _is_on(hass, entity_id: str | None, assumed_on: bool) -> bool:
@@ -135,6 +153,21 @@ def build_appliance_inputs(hass, appliances, coordinator, voltage: float):
                 runtime.last_measured_amps = measured
             elif runtime.last_measured_amps is not None:
                 measured = runtime.last_measured_amps
+        # Car SoC (EV chargers). Held across a sensor dropout the same way,
+        # but only while the car stays plugged in: cloud car sensors go
+        # `unknown` intermittently and one blank cycle must not release the
+        # force-charge override. A car swap always passes through "not
+        # connected", which clears the hold, so it can't leak to another car.
+        connected = _is_connected(hass, app.get(CONF_CONNECTED_SENSOR))
+        soc_entity = app.get(CONF_EV_SOC_SENSOR)
+        soc = read_sensor_optional(hass, soc_entity) if soc_entity else None
+        if soc_entity and runtime is not None:
+            if not connected:
+                runtime.last_soc = None
+            elif soc is not None:
+                runtime.last_soc = soc
+            elif runtime.last_soc is not None:
+                soc = runtime.last_soc
         inputs.append(
             ApplianceInput(
                 # Stable id keying the runtime state: the config subentry id,
@@ -154,10 +187,12 @@ def build_appliance_inputs(hass, appliances, coordinator, voltage: float):
                 partial_min_excess=app.get(CONF_PARTIAL_MIN_EXCESS, DEFAULT_PARTIAL_MIN_EXCESS),
                 hysteresis_seconds=app.get(CONF_HYSTERESIS_ON_OFF_SECONDS, DEFAULT_HYSTERESIS),
                 averaging_window_seconds=app.get(CONF_AVERAGING_WINDOW, DEFAULT_AVERAGING),
-                connected=_is_connected(hass, app.get(CONF_CONNECTED_SENSOR)),
+                connected=connected,
                 entity_on=_is_on(hass, app.get(CONF_ENTITY_ID), assumed_on),
                 measured_amps=measured,
                 has_power_sensor=has_power_sensor,
+                soc=soc,
+                force_charge_below_soc=_resolve_force_charge_below_soc(coordinator, app),
             )
         )
         raw_by_uid[uid] = app

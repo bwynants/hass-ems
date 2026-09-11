@@ -374,6 +374,9 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
             # blank 0, which would read as a genuine "no surplus".
             "excess_amps": None,
             "excess_kw": None,
+            # No decision yet -> the force-charge binary sensors read unavailable.
+            "forced_appliance_ids": None,
+            "forced_appliances": [],
             "active_appliances": on_names,
             "appliances": appliances,
             "auto_switching": self.enabled,
@@ -497,6 +500,8 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
             return {
                 "excess_amps": 0,
                 "excess_kw": 0,
+                "forced_appliance_ids": [],
+                "forced_appliances": [],
                 "active_appliances": kept_names,
                 "appliances": appliances,
                 "auto_switching": self.enabled,
@@ -517,6 +522,8 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
             return {
                 "excess_amps": round(excess_amps, 2),
                 "excess_kw": _kw(excess_amps),
+                "forced_appliance_ids": [],
+                "forced_appliances": [],
                 "active_appliances": [],
                 "appliances": appliances,
                 "auto_switching": False,
@@ -560,14 +567,19 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
         self._persist_state()
 
         active_names = [names_by_uid.get(u, u) for u in result.active]
+        forced_names = [names_by_uid.get(u, u) for u in result.forced]
         _LOGGER.debug(
-            "result: active=%s | decided draw=%.2f A | spare(excess)=%.2f A",
-            active_names, result.decided_amps, excess_amps,
+            "result: active=%s | forced=%s | decided draw=%.2f A | spare(excess)=%.2f A",
+            active_names, forced_names, result.decided_amps, excess_amps,
         )
         _LOGGER.debug("==== EMS cycle end ====")
         return {
             "excess_amps": round(excess_amps, 2),
             "excess_kw": _kw(excess_amps),
+            # Appliances the car-SoC rule drove as `forced` this cycle: uids for
+            # the per-appliance binary sensors, names for the status attribute.
+            "forced_appliance_ids": list(result.forced),
+            "forced_appliances": forced_names,
             "active_appliances": active_names,
             "appliances": appliances,
             "auto_switching": True,

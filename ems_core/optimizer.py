@@ -49,15 +49,41 @@ def _averaged_excess(app: ApplianceInput, state: ApplianceState, fallback: float
     return sum(recent) / len(recent) if recent else fallback
 
 
+def force_charge_active(app: ApplianceInput) -> bool:
+    """EV rule: the car is plugged in AND its SoC is below the appliance's threshold.
+
+    Fail-safe: no threshold (no SoC sensor configured) or no SoC reading (sensor
+    unavailable/unknown, e.g. no car plugged in) ⇒ False. Unmanaged appliances
+    are never overridden — that mode means EMS keeps its hands off entirely.
+    No hysteresis on purpose: SoC only rises while the car is plugged in, so the
+    release at ``soc >= threshold`` is clean.
+    """
+    if app.mode == MODE_UNMANAGED or not app.connected:
+        return False
+    if app.soc is None or app.force_charge_below_soc is None:
+        return False
+    return app.soc < app.force_charge_below_soc
+
+
+def effective_mode(app: ApplianceInput) -> str:
+    """The mode the optimizer drives this appliance with THIS cycle.
+
+    A plugged-in car below its force-charge threshold is driven as ``forced``
+    (charge from the grid now, additive solar+grid budget) regardless of the
+    mode the user selected; it reverts once the threshold is reached.
+    """
+    return MODE_FORCED if force_charge_active(app) else app.mode
+
+
 def _basic_condition(
     app: ApplianceInput,
     state: ApplianceState,
     avg_excess: float,
     remaining: float,
     energy: EnergyInput,
+    mode: str,
 ) -> bool:
     name = app.name
-    mode = app.mode
 
     if mode == MODE_FORCED:
         return True
@@ -146,6 +172,7 @@ def _should_run(
     cycle_excess: float,
     energy: EnergyInput,
     now,
+    mode: str,
 ) -> bool:
     if not app.connected:
         _LOGGER.debug("%s not connected, skipping", app.name)
@@ -158,7 +185,7 @@ def _should_run(
         name, avg_excess, remaining_amps, state.is_on, state.last_change,
     )
 
-    condition_met = _basic_condition(app, state, avg_excess, remaining_amps, energy)
+    condition_met = _basic_condition(app, state, avg_excess, remaining_amps, energy, mode)
     _LOGGER.debug("%s condition_met=%s", name, condition_met)
 
     # Already in the desired state: nothing to do, leave the timer untouched.
@@ -204,6 +231,7 @@ def optimize(
     sorted_apps = sorted(appliances, key=lambda a: a.priority)
     active: list[str] = []          # appliance uids
     active_names: list[str] = []    # display names, for the log lines only
+    forced: list[str] = []          # uids overridden to `forced` by the car-SoC rule
     commands: list[SetFixedAmps] = []
     remaining = excess_amps
     decided_amps = 0.0
@@ -222,6 +250,29 @@ def optimize(
         if mode == MODE_UNMANAGED:
             _LOGGER.debug("  - %s: unmanaged, left alone", name)
             continue
+        state = states.setdefault(app.uid, ApplianceState())
+
+        # Car-SoC override: resolved ONCE here and threaded down into the run
+        # condition, so the budget path below and _should_run agree — a forced
+        # car must draw the additive solar+grid budget, not solar only. Recorded
+        # before the hard peak gate on purpose: "forced" then reads as "EMS wants
+        # to force-charge", even when the quarter-hour cap keeps the charger off.
+        soc_forced = force_charge_active(app)
+        if soc_forced:
+            mode = MODE_FORCED
+            forced.append(app.uid)
+        if soc_forced != state.force_charging:
+            state.force_charging = soc_forced
+            if soc_forced:
+                _LOGGER.info(
+                    "%s: car SoC %s%% < %s%% while plugged in — forcing grid charge",
+                    name, app.soc, app.force_charge_below_soc,
+                )
+            else:
+                _LOGGER.info(
+                    "%s: car SoC %s%% >= %s%% — force charge released, back to mode=%s",
+                    name, app.soc, app.force_charge_below_soc, app.mode,
+                )
         # In `forced` mode, solar surplus and the grid peak-headroom are ADDITIVE
         # — solar is used on top of grid power (the grid part still bounded by the
         # peak/High limit). Other modes use solar only, capped by the headroom.
@@ -244,8 +295,6 @@ def optimize(
             forced_budget = remaining + grid_headroom
         else:
             forced_budget = None
-
-        state = states.setdefault(app.uid, ApplianceState())
 
         # Hard peak cap: if the appliance can't reach its minimum from the budget
         # it may use, it can't run this cycle. The off is immediate (protective),
@@ -275,7 +324,7 @@ def optimize(
                 state.last_fixed_amps = None
                 state.last_fixed_amps_change = None
                 continue
-        if _should_run(app, state, remaining, excess_amps, energy, now):
+        if _should_run(app, state, remaining, excess_amps, energy, now, mode):
             active.append(app.uid)
             active_names.append(name)
 
@@ -373,7 +422,9 @@ def optimize(
         active_names, remaining,
         "off" if peak_remaining is None else f"{peak_remaining:.2f} A",
     )
-    return OptimizeResult(active=active, decided_amps=decided_amps, fixed_amps_commands=commands)
+    return OptimizeResult(
+        active=active, decided_amps=decided_amps, fixed_amps_commands=commands, forced=forced,
+    )
 
 
 def critical_shed(

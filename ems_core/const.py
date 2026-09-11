@@ -41,6 +41,10 @@ FORCED_PEAK_HEADROOM_AMPS = 1.0
 # peak limit) instead of dribbling at min_amps.
 SUNDOWN_SOLAR_W = 100.0
 
+# EV charger: below this car SoC (%) a plugged-in car is charged as if the
+# appliance were in `forced` mode. 0 disables the override (nothing is < 0).
+DEFAULT_FORCE_CHARGE_BELOW_SOC = 0
+
 # Off-peak breakeven default tariff rates (€/kWh). Not exposed in the UI, so the
 # breakeven gate always uses these unless a config override is supplied.
 DEFAULT_COST_PEAK = 0.40

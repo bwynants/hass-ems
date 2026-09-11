@@ -9,7 +9,7 @@ from .coordinator import SolarApplianceCoordinator
 from .demand_coordinator import QuarterlyDemandCoordinator
 from .const import (
     DOMAIN, MANUFACTURER, PLATFORMS, SUBENTRY_TYPE_APPLIANCE,
-    CONF_DEBUG_LOG, DEFAULT_DEBUG_LOG,
+    CONF_DEBUG_LOG, DEFAULT_DEBUG_LOG, CONF_EV_SOC_SENSOR, get_appliances,
 )
 
 # unique_id suffixes of sensors orphaned by past renames:
@@ -21,6 +21,13 @@ _STALE_UNIQUE_ID_SUFFIXES = ("managed_consumption", "managed_consumption_kw")
 # the idempotent cleanups don't re-scan the registry on every reload. Reset on
 # HA restart (fresh module), which is when a fresh migration pass is wanted.
 _MIGRATED_ENTRIES: set[str] = set()
+
+# (domain, unique_id suffix) of the per-appliance entities that only exist for
+# EV chargers (appliances with a car SoC sensor).
+_EV_ENTITY_SUFFIXES = (
+    ("number", "force_charge_below_soc"),
+    ("binary_sensor", "force_charging"),
+)
 
 # Dedicated debug log file, written to the HA config dir so it can be read
 # over the (SMB) config share. Self-contained; remove this block to disable.
@@ -151,6 +158,28 @@ def _cleanup_orphaned_appliance_entities(
         ent_reg.async_remove(registry_entry.entity_id)
 
 
+def _cleanup_ev_entities_without_soc_sensor(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Remove the EV entities of appliances whose car SoC sensor was cleared.
+
+    The platforms only create them while the sensor is configured; clearing it
+    in a reconfigure reloads the entry, but the registry keeps the rows (HA only
+    removes entities with their subentry), so they would linger as unavailable.
+    Cheap enough to run on every setup: two lookups per appliance.
+    """
+    ent_reg = er.async_get(hass)
+    for app in get_appliances(entry):
+        if app.get(CONF_EV_SOC_SENSOR):
+            continue
+        for domain, suffix in _EV_ENTITY_SUFFIXES:
+            unique_id = f"{DOMAIN}_{app['subentry_id']}_{suffix}"
+            entity_id = ent_reg.async_get_entity_id(domain, DOMAIN, unique_id)
+            if entity_id:
+                _PKG_LOGGER.info(
+                    "Removing %s (appliance has no car SoC sensor)", entity_id
+                )
+                ent_reg.async_remove(entity_id)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Optional per-cycle debug log to ems_debug.log — opt-in (off by default),
     # set up off the event loop (file open blocks).
@@ -167,6 +196,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if entry.entry_id not in _MIGRATED_ENTRIES:
         _cleanup_stale_entities(hass, entry)
         _MIGRATED_ENTRIES.add(entry.entry_id)
+    # Not a one-time migration: a reconfigure that clears the SoC sensor reloads
+    # the entry, and that reload must drop the now-orphaned EV entities.
+    _cleanup_ev_entities_without_soc_sensor(hass, entry)
 
     # The fast (~10s) quarter-hour demand coordinator is created first so the
     # main coordinator can read its values for peak-aware control.

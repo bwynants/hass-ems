@@ -38,6 +38,7 @@ from .const import (
     CONF_POWER_SENSOR,
     CONF_PARTIAL_MIN_EXCESS,
     CONF_CONNECTED_SENSOR,
+    CONF_EV_SOC_SENSOR,
     CONF_HYSTERESIS_ON_OFF_SECONDS,
     CONF_AVERAGING_WINDOW,
     CONF_DEMAND_POWER_CURRENT_PEAK_SENSOR,
@@ -163,6 +164,10 @@ def _appliance_schema(current: dict | None) -> vol.Schema:
         _suggest_marker(CONF_POWER_SENSOR, current): SENSOR_ENTITY_SELECTOR,
         _suggest_marker(CONF_PARTIAL_MIN_EXCESS, current): vol.All(int, vol.Range(0, 5000)),
         _suggest_marker(CONF_CONNECTED_SENSOR, current): BINARY_SENSOR_ENTITY_SELECTOR,
+        # EV charger: the car's SoC sensor (%). Optional and clearable; setting
+        # it is what turns on the force-charge-below-SoC feature (the threshold
+        # itself is a number entity, not a form field).
+        _suggest_marker(CONF_EV_SOC_SENSOR, current): SENSOR_ENTITY_SELECTOR,
         # Hysteresis
         _default_marker(CONF_HYSTERESIS_ON_OFF_SECONDS, current, DEFAULT_HYSTERESIS): vol.All(int, vol.Range(min=0)),
         _default_marker(CONF_AVERAGING_WINDOW, current, DEFAULT_AVERAGING): vol.All(int, vol.Range(min=30)),
@@ -353,6 +358,7 @@ class OptionsFlowHandler(ConfigSubentryFlow):
                 CONF_POWER_SENSOR,
                 CONF_PARTIAL_MIN_EXCESS,
                 CONF_CONNECTED_SENSOR,
+                CONF_EV_SOC_SENSOR,
             ):
                 if key not in user_input:
                     self._data.pop(key, None)

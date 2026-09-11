@@ -105,6 +105,7 @@
             "power_sensor": "Vermogenssensor",
             "partial_min_excess": "Minimaal overschot bij gedeeltelijk zon (W)",
             "connected_sensor": "Verbonden-sensor",
+            "ev_soc_sensor": "Laadtoestand-sensor van de auto (SoC)",
             "hysteresis_on_off_seconds": "Aan/uit-hysteresis (seconden)",
             "averaging_window_seconds": "Middelingsvenster (seconden)"
           },
@@ -117,6 +118,7 @@
             "power_sensor": "Optionele sensor met het werkelijke vermogen van het apparaat (W); gebruikt voor de budgettering in plaats van een schatting.",
             "partial_min_excess": "Minimaal gemiddeld overschot om te draaien in de modus partial_solar.",
             "connected_sensor": "Optionele binaire sensor; het apparaat wordt overgeslagen zolang die uit is.",
+            "ev_soc_sensor": "Optioneel. Sensor met de laadtoestand (%) van de auto aan deze lader. Zodra ingesteld is het apparaat een laadpaal: is de auto aangesloten (verbonden-sensor aan) en zit de SoC onder de drempel 'Geforceerd laden onder', dan laadt hij van het net zoals in de modus forced (piekbeveiliging blijft gelden). Een onbekende/onbeschikbare SoC forceert nooit.",
             "hysteresis_on_off_seconds": "Minimale tijd dat een aan/uit-toestand wordt vastgehouden voordat die mag wijzigen, om snel schakelen te voorkomen.",
             "averaging_window_seconds": "Venster waarover het overschotvermogen wordt gemiddeld."
           }
@@ -134,6 +136,7 @@
             "power_sensor": "Vermogenssensor",
             "partial_min_excess": "Minimaal overschot bij gedeeltelijk zon (W)",
             "connected_sensor": "Verbonden-sensor",
+            "ev_soc_sensor": "Laadtoestand-sensor van de auto (SoC)",
             "hysteresis_on_off_seconds": "Aan/uit-hysteresis (seconden)",
             "averaging_window_seconds": "Middelingsvenster (seconden)"
           },
@@ -146,6 +149,7 @@
             "power_sensor": "Optionele sensor met het werkelijke vermogen van het apparaat (W); gebruikt voor de budgettering in plaats van een schatting.",
             "partial_min_excess": "Minimaal gemiddeld overschot om te draaien in de modus partial_solar.",
             "connected_sensor": "Optionele binaire sensor; het apparaat wordt overgeslagen zolang die uit is.",
+            "ev_soc_sensor": "Optioneel. Sensor met de laadtoestand (%) van de auto aan deze lader. Zodra ingesteld is het apparaat een laadpaal: is de auto aangesloten (verbonden-sensor aan) en zit de SoC onder de drempel 'Geforceerd laden onder', dan laadt hij van het net zoals in de modus forced (piekbeveiliging blijft gelden). Een onbekende/onbeschikbare SoC forceert nooit.",
             "hysteresis_on_off_seconds": "Minimale tijd dat een aan/uit-toestand wordt vastgehouden voordat die mag wijzigen, om snel schakelen te voorkomen.",
             "averaging_window_seconds": "Venster waarover het overschotvermogen wordt gemiddeld."
           }
@@ -205,6 +209,9 @@
       },
       "quarterly_demand_critical": {
         "name": "Kwartiervermogen kritiek"
+      },
+      "force_charging": {
+        "name": "Geforceerd laden actief"
       }
     },
     "switch": {
@@ -222,6 +229,11 @@
           "off_peak": "Daltarief",
           "unmanaged": "Onbeheerd"
         }
+      }
+    },
+    "number": {
+      "force_charge_below_soc": {
+        "name": "Geforceerd laden onder"
       }
     }
   }

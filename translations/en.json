@@ -105,6 +105,7 @@
             "power_sensor": "Power sensor",
             "partial_min_excess": "Minimum excess in partial solar (W)",
             "connected_sensor": "Connected sensor",
+            "ev_soc_sensor": "Car battery (SoC) sensor",
             "hysteresis_on_off_seconds": "On/off hysteresis (seconds)",
             "averaging_window_seconds": "Averaging window (seconds)"
           },
@@ -117,6 +118,7 @@
             "power_sensor": "Optional sensor reporting the appliance's real power draw (W); used for budgeting instead of an estimate.",
             "partial_min_excess": "Minimum averaged excess required to run in partial_solar mode.",
             "connected_sensor": "Optional binary sensor; the appliance is skipped while it is off.",
+            "ev_soc_sensor": "Optional. State-of-charge sensor (%) of the car this charger serves. Setting it makes the appliance an EV charger: while the car is plugged in (connected sensor on) and its SoC is below the 'Force charge below' threshold, it charges from the grid as in forced mode (peak protection still applies). An unknown/unavailable SoC never forces.",
             "hysteresis_on_off_seconds": "Minimum time an on/off state is held before it may change, to prevent rapid cycling.",
             "averaging_window_seconds": "Window over which excess power is averaged."
           }
@@ -134,6 +136,7 @@
             "power_sensor": "Power sensor",
             "partial_min_excess": "Minimum excess in partial solar (W)",
             "connected_sensor": "Connected sensor",
+            "ev_soc_sensor": "Car battery (SoC) sensor",
             "hysteresis_on_off_seconds": "On/off hysteresis (seconds)",
             "averaging_window_seconds": "Averaging window (seconds)"
           },
@@ -146,6 +149,7 @@
             "power_sensor": "Optional sensor reporting the appliance's real power draw (W); used for budgeting instead of an estimate.",
             "partial_min_excess": "Minimum averaged excess required to run in partial_solar mode.",
             "connected_sensor": "Optional binary sensor; the appliance is skipped while it is off.",
+            "ev_soc_sensor": "Optional. State-of-charge sensor (%) of the car this charger serves. Setting it makes the appliance an EV charger: while the car is plugged in (connected sensor on) and its SoC is below the 'Force charge below' threshold, it charges from the grid as in forced mode (peak protection still applies). An unknown/unavailable SoC never forces.",
             "hysteresis_on_off_seconds": "Minimum time an on/off state is held before it may change, to prevent rapid cycling.",
             "averaging_window_seconds": "Window over which excess power is averaged."
           }
@@ -205,6 +209,9 @@
       },
       "quarterly_demand_critical": {
         "name": "Quarterly Demand Critical"
+      },
+      "force_charging": {
+        "name": "Force charging"
       }
     },
     "switch": {
@@ -222,6 +229,11 @@
           "off_peak": "Off-peak",
           "unmanaged": "Unmanaged"
         }
+      }
+    },
+    "number": {
+      "force_charge_below_soc": {
+        "name": "Force charge below"
       }
     }
   }

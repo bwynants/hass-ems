@@ -30,7 +30,9 @@ from .energy import (
 )
 from .fixed_amps import step_target, decide
 from .demand import compute_demand
-from .optimizer import optimize, critical_shed, record_excess
+from .optimizer import (
+    optimize, critical_shed, record_excess, force_charge_active, effective_mode,
+)
 
 __all__ = [
     "ApplianceInput",
@@ -53,4 +55,6 @@ __all__ = [
     "optimize",
     "critical_shed",
     "record_excess",
+    "force_charge_active",
+    "effective_mode",
 ]
