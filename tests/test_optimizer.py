@@ -1,14 +1,13 @@
-"""Tests for ems_core.optimizer — allocation, throttling, SoC, hysteresis, shed."""
+"""Tests for ems_core.optimizer — allocation, throttling, hysteresis, shed."""
 import logging
 from datetime import datetime, timedelta
 
 from ems_core.optimizer import optimize, critical_shed, record_excess
 from ems_core.models import (
-    ApplianceInput, ApplianceState, EnergyInput, BatteryStatus, SetFixedAmps,
+    ApplianceInput, ApplianceState, EnergyInput, SetFixedAmps,
 )
 from ems_core.const import (
     MODE_FORCED, MODE_PARTIAL_SOLAR, MODE_FULL_SOLAR, MODE_OFF_PEAK, MODE_UNMANAGED,
-    BATTERY_MODE_STRICT, BATTERY_MODE_RELAXED,
 )
 
 T0 = datetime(2026, 7, 1, 8, 0, 0)
@@ -19,8 +18,7 @@ def _app(**kw):
         name="a", priority=100, min_amps=6, max_amps=16, mode=MODE_PARTIAL_SOLAR,
         has_fixed_amps=False, fixed_amps_value=None, fixed_amps_hold_seconds=120,
         partial_min_excess=1000, hysteresis_seconds=120, averaging_window_seconds=180,
-        connected=True, entity_on=False, measured_amps=None, is_battery=False,
-        ignore_battery_protection=False, min_soc_override=None, soc_hysteresis_percent=5,
+        connected=True, entity_on=False, measured_amps=None,
     )
     base.update(kw)
     base.setdefault("uid", base["name"])
@@ -36,15 +34,12 @@ def _energy(**kw):
     return EnergyInput(**base)
 
 
-NO_BAT = BatteryStatus()
-
-
 def test_forced_additive_budget_uses_solar_on_top_of_grid():
     # forced appliance, solar surplus 4A + peak headroom 16A => can scale high.
     app = _app(mode=MODE_FORCED, has_fixed_amps=True, fixed_amps_value=6, max_amps=16)
     states = {}
     res = optimize([app], states, excess_amps=4.0, peak_amps=16.0,
-                   energy=_energy(), battery=NO_BAT, now=T0)
+                   energy=_energy(), now=T0)
     assert res.active == ["a"]
     # forced_budget = remaining(4) + peak(16) = 20 -> scaled clamps to max 16 ->
     # first fixed_amps write rounds 16 to 16.
@@ -59,7 +54,7 @@ def test_solar_funded_draw_not_capped_by_peak_headroom():
                min_amps=6, max_amps=32, partial_min_excess=0)
     states = {}
     res = optimize([app], states, excess_amps=16.0, peak_amps=8.0,
-                   energy=_energy(), battery=NO_BAT, now=T0)
+                   energy=_energy(), now=T0)
     assert res.active == ["a"]
     # scaled = 16 (surplus, under max 32) -> well above the 8 A headroom; first
     # write quantises down-with-margin (0.5 A step, 0.25 A deadband) to 15.5.
@@ -72,7 +67,7 @@ def test_solar_mode_runs_when_grid_headroom_below_min():
     app = _app(mode=MODE_PARTIAL_SOLAR, min_amps=6, partial_min_excess=0)
     states = {}
     res = optimize([app], states, excess_amps=16.0, peak_amps=3.0,
-                   energy=_energy(), battery=NO_BAT, now=T0)
+                   energy=_energy(), now=T0)
     assert res.active == ["a"]
 
 
@@ -82,7 +77,7 @@ def test_peak_headroom_sheds_when_below_min():
     app = _app(mode=MODE_PARTIAL_SOLAR, min_amps=6, partial_min_excess=0)
     states = {}
     res = optimize([app], states, excess_amps=0.0, peak_amps=3.0,
-                   energy=_energy(), battery=NO_BAT, now=T0)
+                   energy=_energy(), now=T0)
     assert res.active == []
 
 
@@ -92,12 +87,12 @@ def test_min_amps_floor_grid_topup_bounded_by_headroom():
     # exactly that top-up — solar 0.2 + headroom 5.9 = 6.1 >= min 6, so it runs.
     app = _app(mode=MODE_PARTIAL_SOLAR, min_amps=6, partial_min_excess=0)
     res = optimize([app], {}, excess_amps=0.2, peak_amps=5.9,
-                   energy=_energy(), battery=NO_BAT, now=T0)
+                   energy=_energy(), now=T0)
     assert res.active == ["a"]
     # Same surplus, less headroom: 0.2 + 5.0 = 5.2 < 6 -> the grid can't fund
     # the floor, so it stays off.
     res = optimize([app], {}, excess_amps=0.2, peak_amps=5.0,
-                   energy=_energy(), battery=NO_BAT, now=T0)
+                   energy=_energy(), now=T0)
     assert res.active == []
 
 
@@ -108,7 +103,7 @@ def test_priority_order_high_priority_claims_headroom_first():
     a2 = _app(name="lo", priority=50, min_amps=6, mode=MODE_PARTIAL_SOLAR, partial_min_excess=0)
     states = {}
     res = optimize([a2, a1], states, excess_amps=0.0, peak_amps=6.0,
-                   energy=_energy(), battery=NO_BAT, now=T0)
+                   energy=_energy(), now=T0)
     assert res.active == ["hi"]
 
 
@@ -116,7 +111,7 @@ def test_full_solar_off_when_not_covered():
     app = _app(mode=MODE_FULL_SOLAR, min_amps=6, partial_min_excess=0)
     states = {}
     res = optimize([app], states, excess_amps=3.0, peak_amps=None,
-                   energy=_energy(), battery=NO_BAT, now=T0)
+                   energy=_energy(), now=T0)
     assert res.active == []
 
 
@@ -124,7 +119,7 @@ def test_full_solar_on_when_covered():
     app = _app(mode=MODE_FULL_SOLAR, min_amps=6)
     states = {}
     res = optimize([app], states, excess_amps=8.0, peak_amps=None,
-                   energy=_energy(), battery=NO_BAT, now=T0)
+                   energy=_energy(), now=T0)
     assert res.active == ["a"]
 
 
@@ -137,7 +132,7 @@ def test_full_solar_off_on_transient_spike(caplog):
     states = {"a": st}
     with caplog.at_level(logging.INFO, logger="ems_core.optimizer"):
         res = optimize([app], states, excess_amps=10.0, peak_amps=None,
-                       energy=_energy(), battery=NO_BAT, now=T0)
+                       energy=_energy(), now=T0)
     assert res.active == []
 
     def spike_infos():
@@ -151,7 +146,7 @@ def test_full_solar_off_on_transient_spike(caplog):
     # ...and repeats of the same condition don't log INFO again (edge-triggered).
     with caplog.at_level(logging.INFO, logger="ems_core.optimizer"):
         res2 = optimize([app], states, excess_amps=10.0, peak_amps=None,
-                        energy=_energy(), battery=NO_BAT,
+                        energy=_energy(),
                         now=T0 + timedelta(seconds=10))
     assert res2.active == []
     assert len(spike_infos()) == 1
@@ -164,7 +159,7 @@ def test_full_solar_on_when_sustained_and_current():
     st.excess_history.extend([8.0, 8.0, 8.0])
     states = {"a": st}
     res = optimize([app], states, excess_amps=8.0, peak_amps=None,
-                   energy=_energy(), battery=NO_BAT, now=T0)
+                   energy=_energy(), now=T0)
     assert res.active == ["a"]
 
 
@@ -181,7 +176,7 @@ def test_full_solar_running_survives_short_drop_on_average():
     states = {"a": st}
     # One cycle at 0 A: avg = (17*10 + 0)/18 ~= 9.4 A >= 6 -> stays on.
     res = optimize([app], states, excess_amps=0.0, peak_amps=None,
-                   energy=_energy(), battery=NO_BAT, now=T0)
+                   energy=_energy(), now=T0)
     assert res.active == ["a"]
 
 
@@ -197,7 +192,7 @@ def test_full_solar_running_turns_off_when_average_falls():
     st.excess_history.extend([2.0] * 18)  # average well below min
     states = {"a": st}
     res = optimize([app], states, excess_amps=2.0, peak_amps=None,
-                   energy=_energy(), battery=NO_BAT, now=T0)
+                   energy=_energy(), now=T0)
     assert res.active == []
 
 
@@ -211,7 +206,7 @@ def test_full_solar_start_still_requires_current_and_average():
     states = {"a": st}
     # ...but the current budget is below min -> must NOT start.
     res = optimize([app], states, excess_amps=3.0, peak_amps=None,
-                   energy=_energy(), battery=NO_BAT, now=T0)
+                   energy=_energy(), now=T0)
     assert res.active == []
 
 
@@ -221,7 +216,7 @@ def test_off_peak_runs_free_during_off_peak_hours():
     app = _app(mode=MODE_OFF_PEAK, min_amps=6)
     states = {}
     res = optimize([app], states, excess_amps=-10.0, peak_amps=None,
-                   energy=_energy(off_peak=True), battery=NO_BAT, now=T0)
+                   energy=_energy(off_peak=True), now=T0)
     assert res.active == ["a"]
 
 
@@ -231,7 +226,7 @@ def test_off_peak_gated_by_breakeven_when_peak_dearer():
     app = _app(mode=MODE_OFF_PEAK, min_amps=6)
     states = {}
     res = optimize([app], states, excess_amps=-10.0, peak_amps=None,
-                   energy=_energy(off_peak=False), battery=NO_BAT, now=T0)
+                   energy=_energy(off_peak=False), now=T0)
     assert res.active == []
 
 
@@ -243,7 +238,7 @@ def test_off_peak_runs_free_when_peak_cheaper_than_off_peak():
     states = {}
     res = optimize([app], states, excess_amps=-10.0, peak_amps=None,
                    energy=_energy(off_peak=False, cost_peak=0.15, cost_offpeak=0.20),
-                   battery=NO_BAT, now=T0)
+                   now=T0)
     assert res.active == ["a"]
 
 
@@ -254,7 +249,7 @@ def test_off_peak_free_run_still_respects_peak_headroom():
     states = {}
     res = optimize([app], states, excess_amps=0.0, peak_amps=3.0,
                    energy=_energy(off_peak=False, cost_peak=0.15, cost_offpeak=0.20),
-                   battery=NO_BAT, now=T0)
+                   now=T0)
     assert res.active == []
 
 
@@ -265,7 +260,7 @@ def test_off_peak_night_scales_like_forced():
                has_fixed_amps=True, fixed_amps_value=6.0)
     states = {}
     res = optimize([app], states, excess_amps=0.0, peak_amps=20.0,
-                   energy=_energy(off_peak=True, solar_w=0.0), battery=NO_BAT, now=T0)
+                   energy=_energy(off_peak=True, solar_w=0.0), now=T0)
     assert res.active == ["a"]
     # forced_budget = 0 + (20 - 2 reserve) = 18 -> scaled to max 16.
     assert res.fixed_amps_commands[0].value == 16.0
@@ -278,7 +273,7 @@ def test_off_peak_day_does_not_grid_scale():
                has_fixed_amps=True, fixed_amps_value=6.0)
     states = {}
     res = optimize([app], states, excess_amps=0.0, peak_amps=20.0,
-                   energy=_energy(off_peak=True, solar_w=3000.0), battery=NO_BAT, now=T0)
+                   energy=_energy(off_peak=True, solar_w=3000.0), now=T0)
     assert res.active == ["a"]
     assert res.fixed_amps_commands[0].value == 6.0
 
@@ -292,7 +287,7 @@ def test_off_peak_peak_hours_no_grid_scale_even_at_sundown():
     res = optimize([app], states, excess_amps=0.0, peak_amps=20.0,
                    energy=_energy(off_peak=False, solar_w=0.0,
                                   cost_peak=0.15, cost_offpeak=0.20),
-                   battery=NO_BAT, now=T0)
+                   now=T0)
     assert res.active == ["a"]
     assert res.fixed_amps_commands[0].value == 6.0
 
@@ -310,7 +305,7 @@ def test_hold_ramp_prevents_setpoint_climb():
         st.last_fixed_amps = 10.0
         st.last_fixed_amps_change = T0 - timedelta(seconds=3600)
         return optimize([app], {"a": st}, excess_amps=0.0, peak_amps=20.0,
-                        energy=_energy(), battery=NO_BAT, now=T0, hold_ramp=hold)
+                        energy=_energy(), now=T0, hold_ramp=hold)
     # Without the guard the big budget ramps the setpoint above 10 A.
     up = run(False)
     assert up.fixed_amps_commands and up.fixed_amps_commands[0].value > 10.0
@@ -329,55 +324,9 @@ def test_hold_ramp_still_allows_ramp_down():
     st.last_fixed_amps = 12.0
     st.last_fixed_amps_change = T0 - timedelta(seconds=3600)
     res = optimize([app], {"a": st}, excess_amps=0.0, peak_amps=8.0,
-                   energy=_energy(), battery=NO_BAT, now=T0, hold_ramp=True)
+                   energy=_energy(), now=T0, hold_ramp=True)
     assert res.active == ["a"]
     assert res.fixed_amps_commands[0].value < 12.0
-
-
-def test_soc_strict_blocks():
-    app = _app(mode=MODE_FORCED, min_amps=6)
-    bat = BatteryStatus(soc=10, min_soc=20, protection_mode=BATTERY_MODE_STRICT)
-    states = {}
-    res = optimize([app], states, excess_amps=10.0, peak_amps=None,
-                   energy=_energy(), battery=bat, now=T0)
-    assert res.active == []
-    assert states["a"].soc_blocked is True
-
-
-def test_soc_relaxed_runs_only_when_solar_covers():
-    app = _app(mode=MODE_FORCED, min_amps=6)
-    bat = BatteryStatus(soc=10, min_soc=20, protection_mode=BATTERY_MODE_RELAXED)
-    # solar covers (10A >= 6A min) -> runs despite low SoC
-    states = {}
-    res = optimize([app], states, excess_amps=10.0, peak_amps=None,
-                   energy=_energy(), battery=bat, now=T0)
-    assert res.active == ["a"]
-    # solar does NOT cover (3A < 6A) -> blocked
-    states2 = {}
-    res2 = optimize([app], states2, excess_amps=3.0, peak_amps=None,
-                    energy=_energy(), battery=bat, now=T0)
-    assert res2.active == []
-
-
-def test_relaxed_soc_bypass_keeps_full_solar_average_gate():
-    # A LOW battery must not make a full_solar appliance EASIER to start:
-    # the relaxed bypass keeps the sustained-average requirement, so a
-    # transient spike (current covers, average doesn't) still stays off.
-    app = _app(mode=MODE_FULL_SOLAR, min_amps=6)
-    bat = BatteryStatus(soc=10, min_soc=20, protection_mode=BATTERY_MODE_RELAXED)
-    st = ApplianceState()
-    st.excess_history.extend([2.0, 2.0, 2.0])
-    states = {"a": st}
-    res = optimize([app], states, excess_amps=10.0, peak_amps=None,
-                   energy=_energy(), battery=bat, now=T0)
-    assert res.active == []
-    # Sustained + current coverage still runs under the relaxed bypass.
-    st2 = ApplianceState()
-    st2.excess_history.extend([8.0, 8.0, 8.0])
-    states2 = {"a": st2}
-    res2 = optimize([app], states2, excess_amps=8.0, peak_amps=None,
-                    energy=_energy(), battery=bat, now=T0)
-    assert res2.active == ["a"]
 
 
 def test_setpoint_cleared_on_turn_off():
@@ -388,17 +337,17 @@ def test_setpoint_cleared_on_turn_off():
                hysteresis_seconds=0, fixed_amps_hold_seconds=120)
     states = {}
     r1 = optimize([app], states, excess_amps=20.0, peak_amps=None,
-                  energy=_energy(), battery=NO_BAT, now=T0)
+                  energy=_energy(), now=T0)
     assert r1.fixed_amps_commands == [SetFixedAmps("a", 16.0)]
     # Surplus gone -> off; setpoint tracking must be cleared.
     r2 = optimize([app], states, excess_amps=0.0, peak_amps=None,
-                  energy=_energy(), battery=NO_BAT, now=T0 + timedelta(seconds=10))
+                  energy=_energy(), now=T0 + timedelta(seconds=10))
     assert r2.active == []
     assert states["a"].last_fixed_amps is None
     # Modest surplus re-activates within the old hold window: fresh write at 6,
     # not a silent hold at the stale 16.
     r3 = optimize([app], states, excess_amps=6.5, peak_amps=None,
-                  energy=_energy(), battery=NO_BAT, now=T0 + timedelta(seconds=20))
+                  energy=_energy(), now=T0 + timedelta(seconds=20))
     assert r3.active == ["a"]
     assert r3.fixed_amps_commands == [SetFixedAmps("a", 6.0)]
 
@@ -411,15 +360,15 @@ def test_on_off_hysteresis_holds_recent_state():
     # Cycle 1: turns on at T0
     states = {}
     optimize([app], states, excess_amps=10.0, peak_amps=None,
-             energy=_energy(), battery=NO_BAT, now=T0)
+             energy=_energy(), now=T0)
     assert states["a"].is_on is True
     # Cycle 2: 30s later, condition now false, but within hysteresis -> stays on
     res = optimize([app], states, excess_amps=0.0, peak_amps=None,
-                   energy=_energy(), battery=NO_BAT, now=T0 + timedelta(seconds=30))
+                   energy=_energy(), now=T0 + timedelta(seconds=30))
     assert res.active == ["a"]
     # Cycle 3: 200s later, condition still false, past hysteresis -> turns off
     res2 = optimize([app], states, excess_amps=0.0, peak_amps=None,
-                    energy=_energy(), battery=NO_BAT, now=T0 + timedelta(seconds=230))
+                    energy=_energy(), now=T0 + timedelta(seconds=230))
     assert res2.active == []
 
 
@@ -433,7 +382,7 @@ def test_activation_ignores_zero_measured():
               measured_amps=0.0, entity_on=False, priority=200)
     states = {}
     res = optimize([a1, a2], states, excess_amps=8.0, peak_amps=None,
-                   energy=_energy(), battery=NO_BAT, now=T0)
+                   energy=_energy(), now=T0)
     assert res.active == ["a1"]
     assert res.decided_amps == 6
 
@@ -443,7 +392,7 @@ def test_running_appliance_uses_measured():
     app = _app(mode=MODE_FULL_SOLAR, min_amps=6, measured_amps=9.0, entity_on=True)
     states = {}
     res = optimize([app], states, excess_amps=10.0, peak_amps=None,
-                   energy=_energy(), battery=NO_BAT, now=T0)
+                   energy=_energy(), now=T0)
     assert res.active == ["a"]
     assert res.decided_amps == 9.0
 
@@ -456,53 +405,25 @@ def test_peak_cap_off_goes_through_state_machine():
                has_fixed_amps=True, fixed_amps_value=16.0, hysteresis_seconds=60)
     states = {}
     r1 = optimize([app], states, excess_amps=0.0, peak_amps=20.0,
-                  energy=_energy(), battery=NO_BAT, now=T0)
+                  energy=_energy(), now=T0)
     assert r1.active == ["a"]
     assert r1.fixed_amps_commands == [SetFixedAmps("a", 16.0)]
     # Headroom collapses below min -> hard off, state machine updated.
     r2 = optimize([app], states, excess_amps=0.0, peak_amps=3.0,
-                  energy=_energy(), battery=NO_BAT, now=T0 + timedelta(seconds=10))
+                  energy=_energy(), now=T0 + timedelta(seconds=10))
     assert r2.active == []
     assert states["a"].is_on is False
     assert states["a"].last_fixed_amps is None
     # Headroom recovers within the hysteresis window -> stays off (damped).
     r3 = optimize([app], states, excess_amps=0.0, peak_amps=8.0,
-                  energy=_energy(), battery=NO_BAT, now=T0 + timedelta(seconds=20))
+                  energy=_energy(), now=T0 + timedelta(seconds=20))
     assert r3.active == []
     # Past the window -> on again with a FRESH setpoint write. Budget = 8 A peak
     # minus the 1 A forced reserve = 7 A -> written 6.5 A (not the stale 16).
     r4 = optimize([app], states, excess_amps=0.0, peak_amps=8.0,
-                  energy=_energy(), battery=NO_BAT, now=T0 + timedelta(seconds=90))
+                  energy=_energy(), now=T0 + timedelta(seconds=90))
     assert r4.active == ["a"]
     assert r4.fixed_amps_commands == [SetFixedAmps("a", 6.5)]
-
-
-def test_soc_block_held_when_sensor_unavailable():
-    # A latched SoC block must survive the SoC sensor dropping out (fail safe).
-    app = _app(mode=MODE_FORCED, min_amps=6)
-    low = BatteryStatus(soc=10, min_soc=20, protection_mode=BATTERY_MODE_STRICT)
-    states = {}
-    res = optimize([app], states, excess_amps=10.0, peak_amps=None,
-                   energy=_energy(), battery=low, now=T0)
-    assert res.active == [] and states["a"].soc_blocked is True
-    # Sensor unavailable: soc=None. The latch is held, appliance stays blocked.
-    lost = BatteryStatus(soc=None, min_soc=20, protection_mode=BATTERY_MODE_STRICT)
-    res2 = optimize([app], states, excess_amps=10.0, peak_amps=None,
-                    energy=_energy(), battery=lost, now=T0 + timedelta(seconds=10))
-    assert res2.active == []
-    assert states["a"].soc_blocked is True
-
-
-def test_min_soc_override_zero_disables_block():
-    # min_soc_override=0 is a documented escape hatch: 'override if override
-    # is not None' — a falsy-0 rewrite would silently re-enable blocking.
-    app = _app(mode=MODE_FORCED, min_amps=6, min_soc_override=0)
-    low = BatteryStatus(soc=10, min_soc=20, protection_mode=BATTERY_MODE_STRICT)
-    states = {}
-    res = optimize([app], states, excess_amps=10.0, peak_amps=None,
-                   energy=_energy(), battery=low, now=T0)
-    assert res.active == ["a"]
-    assert states["a"].soc_blocked is False
 
 
 def test_solar_covered_draw_keeps_peak_headroom():
@@ -514,7 +435,7 @@ def test_solar_covered_draw_keeps_peak_headroom():
     # 10 A solar, 6 A grid headroom: solar app uses 6 A of solar (headroom
     # untouched), forced app then runs on remaining 4 A solar + 6 A grid.
     res = optimize([solar_app, forced_app], states, excess_amps=10.0, peak_amps=6.0,
-                   energy=_energy(), battery=NO_BAT, now=T0)
+                   energy=_energy(), now=T0)
     assert res.active == ["s", "f"]
 
 
@@ -527,7 +448,7 @@ def test_forced_reserves_peak_headroom():
                has_fixed_amps=True, fixed_amps_value=6.0)
     states = {}
     res = optimize([app], states, excess_amps=0.0, peak_amps=10.0,
-                   energy=_energy(), battery=NO_BAT, now=T0)
+                   energy=_energy(), now=T0)
     assert res.active == ["a"]
     assert res.fixed_amps_commands[0].value == 8.5
 
@@ -541,12 +462,12 @@ def test_forced_additive_split_seen_by_second_appliance():
     f2 = _app(name="f2", uid="f2", priority=50, mode=MODE_FORCED, min_amps=6)
     states = {}
     res = optimize([f1, f2], states, excess_amps=10.0, peak_amps=10.0,
-                   energy=_energy(), battery=NO_BAT, now=T0)
+                   energy=_energy(), now=T0)
     assert res.active == ["f1"]
     # With more headroom the second one fits again (0 solar + 10 grid >= 6).
     states2 = {}
     res2 = optimize([f1, f2], states2, excess_amps=10.0, peak_amps=16.0,
-                    energy=_energy(), battery=NO_BAT, now=T0)
+                    energy=_energy(), now=T0)
     assert res2.active == ["f1", "f2"]
 
 
@@ -560,7 +481,7 @@ def test_duplicate_names_commands_keyed_by_uid():
     states = {}
     # 8 A covers one appliance's minimum but not both.
     res = optimize([a1, a2], states, excess_amps=8.0, peak_amps=None,
-                   energy=_energy(), battery=NO_BAT, now=T0)
+                   energy=_energy(), now=T0)
     assert res.active == ["sub1"]
     assert all(cmd.uid == "sub1" for cmd in res.fixed_amps_commands)
 
@@ -583,7 +504,7 @@ def test_unmanaged_left_alone():
     app = _app(mode=MODE_UNMANAGED, entity_on=True)
     states = {}
     res = optimize([app], states, excess_amps=10.0, peak_amps=None,
-                   energy=_energy(), battery=NO_BAT, now=T0)
+                   energy=_energy(), now=T0)
     assert res.active == []
     assert res.fixed_amps_commands == []
 
@@ -617,7 +538,7 @@ def test_seeded_running_appliance_survives_a_bad_first_budget():
                partial_min_excess=1000)
     states = {"a": ApplianceState(is_on=True, last_change=T0)}
     res = optimize([app], states, excess_amps=0.0, peak_amps=None,
-                   energy=_energy(), battery=NO_BAT, now=T0 + timedelta(seconds=10))
+                   energy=_energy(), now=T0 + timedelta(seconds=10))
     assert res.active == ["a"]
     assert states["a"].is_on is True
 
@@ -627,7 +548,7 @@ def test_seeded_running_appliance_still_switches_off_after_the_window():
                partial_min_excess=1000)
     states = {"a": ApplianceState(is_on=True, last_change=T0)}
     res = optimize([app], states, excess_amps=0.0, peak_amps=None,
-                   energy=_energy(), battery=NO_BAT, now=T0 + timedelta(seconds=121))
+                   energy=_energy(), now=T0 + timedelta(seconds=121))
     assert res.active == []
     assert states["a"].is_on is False
 
@@ -641,7 +562,7 @@ def test_unseeded_running_appliance_is_dropped_immediately():
                partial_min_excess=1000)
     states = {}
     res = optimize([app], states, excess_amps=0.0, peak_amps=None,
-                   energy=_energy(), battery=NO_BAT, now=T0)
+                   energy=_energy(), now=T0)
     assert res.active == []
     assert states["a"].last_change is None  # nothing arms the hysteresis window
 
@@ -652,7 +573,7 @@ def test_seeded_setpoint_is_not_rewritten_on_the_first_cycle():
     states = {"a": ApplianceState(is_on=True, last_change=T0,
                                   last_fixed_amps=10.0, last_fixed_amps_change=T0)}
     res = optimize([app], states, excess_amps=10.0, peak_amps=None,
-                   energy=_energy(), battery=NO_BAT, now=T0 + timedelta(seconds=10))
+                   energy=_energy(), now=T0 + timedelta(seconds=10))
     assert res.active == ["a"]
     assert res.fixed_amps_commands == []
 
@@ -664,7 +585,7 @@ def test_setpoint_uses_the_appliances_own_step():
     app = _app(mode=MODE_FORCED, has_fixed_amps=True, fixed_amps_value=6,
                fixed_amps_step=0.1)
     res = optimize([app], {}, excess_amps=7.85, peak_amps=None,
-                   energy=_energy(), battery=NO_BAT, now=T0)
+                   energy=_energy(), now=T0)
     assert res.fixed_amps_commands == [SetFixedAmps("a", 7.8)]
 
 
@@ -672,5 +593,5 @@ def test_setpoint_falls_back_to_the_default_step():
     # Same budget, no step from the entity -> the 0.5 A default applies.
     app = _app(mode=MODE_FORCED, has_fixed_amps=True, fixed_amps_value=6)
     res = optimize([app], {}, excess_amps=7.85, peak_amps=None,
-                   energy=_energy(), battery=NO_BAT, now=T0)
+                   energy=_energy(), now=T0)
     assert res.fixed_amps_commands == [SetFixedAmps("a", 7.5)]

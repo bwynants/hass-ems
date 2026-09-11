@@ -106,14 +106,7 @@
             "partial_min_excess": "Minimaal overschot bij gedeeltelijk zon (W)",
             "connected_sensor": "Verbonden-sensor",
             "hysteresis_on_off_seconds": "Aan/uit-hysteresis (seconden)",
-            "averaging_window_seconds": "Middelingsvenster (seconden)",
-            "min_soc_override": "Minimale SoC-overschrijving (%)",
-            "ignore_battery_protection": "Batterijbeveiliging negeren",
-            "soc_hysteresis_percent": "SoC-hysteresis (%)",
-            "is_battery": "Dit apparaat is een batterij",
-            "battery_soc_sensor": "Batterij-laadtoestandsensor (SoC)",
-            "min_soc": "Minimale batterij-SoC (%)",
-            "battery_protection_mode": "Batterijbeveiligingsmodus"
+            "averaging_window_seconds": "Middelingsvenster (seconden)"
           },
           "data_description": {
             "priority": "Lagere nummers draaien eerst wanneer het overschot beperkt is.",
@@ -125,13 +118,7 @@
             "partial_min_excess": "Minimaal gemiddeld overschot om te draaien in de modus partial_solar.",
             "connected_sensor": "Optionele binaire sensor; het apparaat wordt overgeslagen zolang die uit is.",
             "hysteresis_on_off_seconds": "Minimale tijd dat een aan/uit-toestand wordt vastgehouden voordat die mag wijzigen, om snel schakelen te voorkomen.",
-            "averaging_window_seconds": "Venster waarover het overschotvermogen wordt gemiddeld.",
-            "min_soc_override": "Minimale batterij-SoC per apparaat, die de waarde van de batterij overschrijft.",
-            "soc_hysteresis_percent": "Extra SoC boven het minimum die nodig is om na een blokkering opnieuw in te schakelen.",
-            "is_battery": "Indien ingeschakeld wordt dit apparaat als batterij behandeld: het levert de SoC-sensor en de onderstaande drempel die de andere apparaten beschermen, en wordt zelf nooit geblokkeerd door SoC-bescherming.",
-            "battery_soc_sensor": "Laadtoestandsensor (%) voor deze batterij; gebruikt om de andere apparaten te reguleren.",
-            "min_soc": "Andere apparaten worden geblokkeerd zolang de SoC van deze batterij onder deze waarde ligt.",
-            "battery_protection_mode": "Strikt schakelt de andere apparaten meteen uit wanneer de batterij onder de drempel zakt; soepel houdt ze inzetbaar maar alleen zolang zonne-overschot ze dekt (ze wachten op zon in plaats van de batterij te ontladen)."
+            "averaging_window_seconds": "Venster waarover het overschotvermogen wordt gemiddeld."
           }
         },
         "reconfigure_basic": {
@@ -148,14 +135,7 @@
             "partial_min_excess": "Minimaal overschot bij gedeeltelijk zon (W)",
             "connected_sensor": "Verbonden-sensor",
             "hysteresis_on_off_seconds": "Aan/uit-hysteresis (seconden)",
-            "averaging_window_seconds": "Middelingsvenster (seconden)",
-            "min_soc_override": "Minimale SoC-overschrijving (%)",
-            "ignore_battery_protection": "Batterijbeveiliging negeren",
-            "soc_hysteresis_percent": "SoC-hysteresis (%)",
-            "is_battery": "Dit apparaat is een batterij",
-            "battery_soc_sensor": "Batterij-laadtoestandsensor (SoC)",
-            "min_soc": "Minimale batterij-SoC (%)",
-            "battery_protection_mode": "Batterijbeveiligingsmodus"
+            "averaging_window_seconds": "Middelingsvenster (seconden)"
           },
           "data_description": {
             "priority": "Lagere nummers draaien eerst wanneer het overschot beperkt is.",
@@ -167,13 +147,7 @@
             "partial_min_excess": "Minimaal gemiddeld overschot om te draaien in de modus partial_solar.",
             "connected_sensor": "Optionele binaire sensor; het apparaat wordt overgeslagen zolang die uit is.",
             "hysteresis_on_off_seconds": "Minimale tijd dat een aan/uit-toestand wordt vastgehouden voordat die mag wijzigen, om snel schakelen te voorkomen.",
-            "averaging_window_seconds": "Venster waarover het overschotvermogen wordt gemiddeld.",
-            "min_soc_override": "Minimale batterij-SoC per apparaat, die de waarde van de batterij overschrijft.",
-            "soc_hysteresis_percent": "Extra SoC boven het minimum die nodig is om na een blokkering opnieuw in te schakelen.",
-            "is_battery": "Indien ingeschakeld wordt dit apparaat als batterij behandeld: het levert de SoC-sensor en de onderstaande drempel die de andere apparaten beschermen, en wordt zelf nooit geblokkeerd door SoC-bescherming.",
-            "battery_soc_sensor": "Laadtoestandsensor (%) voor deze batterij; gebruikt om de andere apparaten te reguleren.",
-            "min_soc": "Andere apparaten worden geblokkeerd zolang de SoC van deze batterij onder deze waarde ligt.",
-            "battery_protection_mode": "Strikt schakelt de andere apparaten meteen uit wanneer de batterij onder de drempel zakt; soepel houdt ze inzetbaar maar alleen zolang zonne-overschot ze dekt (ze wachten op zon in plaats van de batterij te ontladen)."
+            "averaging_window_seconds": "Venster waarover het overschotvermogen wordt gemiddeld."
           }
         },
         "remove": {
@@ -248,14 +222,6 @@
           "off_peak": "Daltarief",
           "unmanaged": "Onbeheerd"
         }
-      }
-    }
-  },
-  "selector": {
-    "battery_protection_mode": {
-      "options": {
-        "strict": "Strikt",
-        "relaxed": "Soepel"
       }
     }
   }

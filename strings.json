@@ -106,14 +106,7 @@
             "partial_min_excess": "Minimum excess in partial solar (W)",
             "connected_sensor": "Connected sensor",
             "hysteresis_on_off_seconds": "On/off hysteresis (seconds)",
-            "averaging_window_seconds": "Averaging window (seconds)",
-            "min_soc_override": "Minimum SoC override (%)",
-            "ignore_battery_protection": "Ignore battery protection",
-            "soc_hysteresis_percent": "SoC hysteresis (%)",
-            "is_battery": "This appliance is a battery",
-            "battery_soc_sensor": "Battery state-of-charge sensor",
-            "min_soc": "Minimum battery SoC (%)",
-            "battery_protection_mode": "Battery protection mode"
+            "averaging_window_seconds": "Averaging window (seconds)"
           },
           "data_description": {
             "priority": "Lower numbers run first when surplus is limited.",
@@ -125,13 +118,7 @@
             "partial_min_excess": "Minimum averaged excess required to run in partial_solar mode.",
             "connected_sensor": "Optional binary sensor; the appliance is skipped while it is off.",
             "hysteresis_on_off_seconds": "Minimum time an on/off state is held before it may change, to prevent rapid cycling.",
-            "averaging_window_seconds": "Window over which excess power is averaged.",
-            "min_soc_override": "Per-appliance minimum battery SoC, overriding the battery's value.",
-            "soc_hysteresis_percent": "Extra SoC above the minimum required to re-enable after a block.",
-            "is_battery": "When enabled, this appliance is treated as a battery: it provides the SoC sensor and threshold below that protect the other appliances, and is itself never blocked by SoC protection.",
-            "battery_soc_sensor": "State-of-charge sensor (%) for this battery; used to gate the other appliances.",
-            "min_soc": "Other appliances are blocked while this battery's SoC is below this value.",
-            "battery_protection_mode": "Strict turns the other appliances off immediately when the battery is below the threshold; relaxed keeps them eligible but only while solar surplus covers them (they wait for solar instead of draining the battery)."
+            "averaging_window_seconds": "Window over which excess power is averaged."
           }
         },
         "reconfigure_basic": {
@@ -148,14 +135,7 @@
             "partial_min_excess": "Minimum excess in partial solar (W)",
             "connected_sensor": "Connected sensor",
             "hysteresis_on_off_seconds": "On/off hysteresis (seconds)",
-            "averaging_window_seconds": "Averaging window (seconds)",
-            "min_soc_override": "Minimum SoC override (%)",
-            "ignore_battery_protection": "Ignore battery protection",
-            "soc_hysteresis_percent": "SoC hysteresis (%)",
-            "is_battery": "This appliance is a battery",
-            "battery_soc_sensor": "Battery state-of-charge sensor",
-            "min_soc": "Minimum battery SoC (%)",
-            "battery_protection_mode": "Battery protection mode"
+            "averaging_window_seconds": "Averaging window (seconds)"
           },
           "data_description": {
             "priority": "Lower numbers run first when surplus is limited.",
@@ -167,13 +147,7 @@
             "partial_min_excess": "Minimum averaged excess required to run in partial_solar mode.",
             "connected_sensor": "Optional binary sensor; the appliance is skipped while it is off.",
             "hysteresis_on_off_seconds": "Minimum time an on/off state is held before it may change, to prevent rapid cycling.",
-            "averaging_window_seconds": "Window over which excess power is averaged.",
-            "min_soc_override": "Per-appliance minimum battery SoC, overriding the battery's value.",
-            "soc_hysteresis_percent": "Extra SoC above the minimum required to re-enable after a block.",
-            "is_battery": "When enabled, this appliance is treated as a battery: it provides the SoC sensor and threshold below that protect the other appliances, and is itself never blocked by SoC protection.",
-            "battery_soc_sensor": "State-of-charge sensor (%) for this battery; used to gate the other appliances.",
-            "min_soc": "Other appliances are blocked while this battery's SoC is below this value.",
-            "battery_protection_mode": "Strict turns the other appliances off immediately when the battery is below the threshold; relaxed keeps them eligible but only while solar surplus covers them (they wait for solar instead of draining the battery)."
+            "averaging_window_seconds": "Window over which excess power is averaged."
           }
         },
         "remove": {
@@ -248,14 +222,6 @@
           "off_peak": "Off-peak",
           "unmanaged": "Unmanaged"
         }
-      }
-    }
-  },
-  "selector": {
-    "battery_protection_mode": {
-      "options": {
-        "strict": "Strict",
-        "relaxed": "Relaxed"
       }
     }
   }

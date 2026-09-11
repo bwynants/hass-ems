@@ -12,7 +12,7 @@ from .const import (
     DOMAIN, CONF_PEAK_TARIFF_SENSOR, CONF_NAME, CONF_VOLTAGE,
     CONF_AUTO_SWITCHING, DEFAULT_AUTO_SWITCHING, DEFAULT_VOLTAGE,
     CONTROLLER_UPDATE_INTERVAL, CONF_GRID_EXPORT, GRID_STALE_SECONDS, get_appliances,
-    CONF_SOLAR_PRODUCTION, CONF_HOUSE_LOAD, CONF_BATTERY_SOC_SENSOR,
+    CONF_SOLAR_PRODUCTION, CONF_HOUSE_LOAD,
     CONF_ENTITY_ID, CONF_POWER_SENSOR, CONF_FIXED_AMPS, CONF_CONNECTED_SENSOR,
     CONF_DEMAND_POWER_CONSUMED_SENSOR, MODE_UNMANAGED, STARTUP_GRACE_SECONDS,
 )
@@ -33,11 +33,11 @@ STATE_SAVE_DELAY_SECONDS = 30
 # they must never hold up the start.
 _GLOBAL_SOURCE_KEYS = (
     CONF_GRID_EXPORT, CONF_SOLAR_PRODUCTION, CONF_HOUSE_LOAD,
-    CONF_VOLTAGE, CONF_PEAK_TARIFF_SENSOR, CONF_BATTERY_SOC_SENSOR,
+    CONF_VOLTAGE, CONF_PEAK_TARIFF_SENSOR,
 )
 _APPLIANCE_SOURCE_KEYS = (
     CONF_ENTITY_ID, CONF_POWER_SENSOR, CONF_FIXED_AMPS,
-    CONF_CONNECTED_SENSOR, CONF_BATTERY_SOC_SENSOR,
+    CONF_CONNECTED_SENSOR,
 )
 
 
@@ -71,7 +71,6 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
         # appliance uid (config subentry id) -> ems_core.ApplianceState
         self.appliance_states: dict[str, ems_core.ApplianceState] = {}
         self._enabled = entry.options.get(CONF_AUTO_SWITCHING, DEFAULT_AUTO_SWITCHING)
-        self._last_soc = None
         # Set by __init__.py after construction; the fast quarter-hour demand
         # coordinator, read here for peak-aware control.
         self.demand_coordinator = None
@@ -114,7 +113,6 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
                 last_change=_parse_dt(raw.get("last_change")),
                 last_fixed_amps=_parse_float(raw.get("last_fixed_amps")),
                 last_fixed_amps_change=_parse_dt(raw.get("last_fixed_amps_change")),
-                soc_blocked=bool(raw.get("soc_blocked")),
             )
         self._persisted_snapshot = self._state_snapshot()
         _LOGGER.debug(
@@ -138,7 +136,6 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
                         st.last_fixed_amps_change.isoformat()
                         if st.last_fixed_amps_change else None
                     ),
-                    "soc_blocked": st.soc_blocked,
                 }
                 for uid, st in self.appliance_states.items()
             }
@@ -377,7 +374,6 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
             # blank 0, which would read as a genuine "no surplus".
             "excess_amps": None,
             "excess_kw": None,
-            "soc": self._last_soc,
             "active_appliances": on_names,
             "appliances": appliances,
             "auto_switching": self.enabled,
@@ -408,15 +404,6 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
         def _kw(amps: float) -> float:
             """Amps → kW at this cycle's voltage (for the *_kw sensor values)."""
             return round(amps * voltage / 1000.0, 2)
-
-        # SoC / protection threshold, derived from the battery appliances.
-        battery = ems_core.battery_status(inputs)
-        self._last_soc = battery.soc
-        if battery.soc is not None or battery.min_soc is not None:
-            _LOGGER.debug(
-                "battery: soc=%s, min_soc=%s, protection=%s",
-                battery.soc, battery.min_soc, battery.protection_mode,
-            )
 
         # Amps the managed appliances are currently drawing (added back below).
         managed_amps = ems_core.managed_consumption_amps(inputs)
@@ -510,8 +497,7 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
             return {
                 "excess_amps": 0,
                 "excess_kw": 0,
-                "soc": self._last_soc,
-                "active_appliances": kept_names,
+                    "active_appliances": kept_names,
                 "appliances": appliances,
                 "auto_switching": self.enabled,
                 "demand_critical": True,
@@ -531,8 +517,7 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
             return {
                 "excess_amps": round(excess_amps, 2),
                 "excess_kw": _kw(excess_amps),
-                "soc": self._last_soc,
-                "active_appliances": [],
+                    "active_appliances": [],
                 "appliances": appliances,
                 "auto_switching": False,
                 "managed_amps": round(managed_amps, 2),
@@ -566,7 +551,7 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
                 GRID_STALE_SECONDS,
             )
         result = ems_core.optimize(
-            inputs, self.appliance_states, excess_amps, peak_amps, energy, battery, now,
+            inputs, self.appliance_states, excess_amps, peak_amps, energy, now,
             hold_ramp=grid_stale,
         )
         await control.apply_commands(
@@ -583,7 +568,6 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
         return {
             "excess_amps": round(excess_amps, 2),
             "excess_kw": _kw(excess_amps),
-            "soc": self._last_soc,
             "active_appliances": active_names,
             "appliances": appliances,
             "auto_switching": True,

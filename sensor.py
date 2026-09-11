@@ -75,7 +75,6 @@ class SolarApplianceStatusSensor(EMSEntity, SensorEntity):
 
         return {
             "excess_amps": data.get("excess_amps"),
-            "soc": data.get("soc"),
             "active_appliances": data.get("active_appliances", []),
             "auto_switching": data.get("auto_switching"),
             "demand_high": demand.get("high"),

@@ -17,15 +17,13 @@ from .const import (
     CONF_PEAK_TARIFF_SENSOR, CONF_NAME, CONF_ENTITY_ID, CONF_PRIORITY,
     CONF_MIN_AMPS, CONF_MAX_AMPS, CONF_FIXED_AMPS, CONF_FIXED_AMPS_HYSTERESIS_SECONDS,
     CONF_POWER_SENSOR, CONF_PARTIAL_MIN_EXCESS, CONF_CONNECTED_SENSOR,
-    CONF_HYSTERESIS_ON_OFF_SECONDS, CONF_AVERAGING_WINDOW, CONF_MIN_SOC_OVERRIDE,
-    CONF_IGNORE_BATTERY_PROTECTION, CONF_SOC_HYSTERESIS_PERCENT, CONF_IS_BATTERY,
-    CONF_BATTERY_SOC_SENSOR, CONF_MIN_SOC, CONF_BATTERY_PROTECTION_MODE,
+    CONF_HYSTERESIS_ON_OFF_SECONDS, CONF_AVERAGING_WINDOW,
     CONF_RUNTIME_MODE, CONF_RUNTIME_MODES,
     CONF_COST_PEAK, CONF_COST_OFFPEAK, CONF_GAIN_EXPORT,
     DEFAULT_MIN_AMPS, DEFAULT_MAX_AMPS, DEFAULT_PRIORITY, DEFAULT_HYSTERESIS,
-    DEFAULT_AVERAGING, DEFAULT_SOC_HYSTERESIS, DEFAULT_IGNORE_PROTECTION,
+    DEFAULT_AVERAGING,
     DEFAULT_FIXED_AMPS_HYSTERESIS_SECONDS, DEFAULT_PARTIAL_MIN_EXCESS,
-    DEFAULT_MIN_SOC, DEFAULT_BATTERY_MODE, DEFAULT_MODE,
+    DEFAULT_MODE,
     DEFAULT_COST_PEAK, DEFAULT_COST_OFFPEAK, DEFAULT_GAIN_EXPORT,
     FIXED_AMPS_STEP, MODE_UNMANAGED,
 )
@@ -107,7 +105,6 @@ def build_appliance_inputs(hass, appliances, coordinator, voltage: float):
     for app in appliances:
         name = app[CONF_NAME]
         uid = app["subentry_id"]
-        is_battery = app.get(CONF_IS_BATTERY, False)
         fixed_entity = app.get(CONF_FIXED_AMPS)
         # The "amps to use" (number/input_number) entity carries its own min/max
         # bounds, so those are used as the appliance's min/max amps rather than
@@ -161,15 +158,6 @@ def build_appliance_inputs(hass, appliances, coordinator, voltage: float):
                 entity_on=_is_on(hass, app.get(CONF_ENTITY_ID), assumed_on),
                 measured_amps=measured,
                 has_power_sensor=has_power_sensor,
-                is_battery=is_battery,
-                ignore_battery_protection=app.get(
-                    CONF_IGNORE_BATTERY_PROTECTION, DEFAULT_IGNORE_PROTECTION
-                ),
-                min_soc_override=app.get(CONF_MIN_SOC_OVERRIDE),
-                soc_hysteresis_percent=app.get(CONF_SOC_HYSTERESIS_PERCENT, DEFAULT_SOC_HYSTERESIS),
-                battery_soc=read_sensor_optional(hass, app.get(CONF_BATTERY_SOC_SENSOR)) if is_battery else None,
-                battery_min_soc=app.get(CONF_MIN_SOC, DEFAULT_MIN_SOC) if is_battery else None,
-                battery_protection_mode=app.get(CONF_BATTERY_PROTECTION_MODE, DEFAULT_BATTERY_MODE) if is_battery else None,
             )
         )
         raw_by_uid[uid] = app

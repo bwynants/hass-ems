@@ -14,7 +14,6 @@ from .models import (
     ApplianceInput,
     ApplianceState,
     EnergyInput,
-    BatteryStatus,
     SetFixedAmps,
     FixedAmpsDecision,
     OptimizeResult,
@@ -30,7 +29,6 @@ from .energy import (
     managed_consumption_amps,
 )
 from .fixed_amps import step_target, decide
-from .battery import battery_status
 from .demand import compute_demand
 from .optimizer import optimize, critical_shed, record_excess
 
@@ -38,7 +36,6 @@ __all__ = [
     "ApplianceInput",
     "ApplianceState",
     "EnergyInput",
-    "BatteryStatus",
     "SetFixedAmps",
     "FixedAmpsDecision",
     "OptimizeResult",
@@ -52,7 +49,6 @@ __all__ = [
     "managed_consumption_amps",
     "step_target",
     "decide",
-    "battery_status",
     "compute_demand",
     "optimize",
     "critical_shed",

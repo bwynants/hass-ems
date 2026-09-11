@@ -38,11 +38,8 @@ def get_appliances(entry: ConfigEntry) -> list[dict[str, Any]]:
 CONF_SOLAR_PRODUCTION = "solar_production_sensor"
 CONF_HOUSE_LOAD = "house_load_sensor"
 CONF_GRID_EXPORT = "grid_export_sensor"
-CONF_BATTERY_SOC_SENSOR = "battery_soc_sensor"
 CONF_PEAK_TARIFF_SENSOR = "peak_tariff_sensor"
 CONF_VOLTAGE = "voltage"
-CONF_MIN_SOC = "min_soc"
-CONF_BATTERY_PROTECTION_MODE = "battery_protection_mode"
 
 # Electricity prices (€/kWh), used by the off_peak-mode breakeven decision.
 CONF_COST_PEAK = "cost_peak"
@@ -77,13 +74,7 @@ CONF_FIXED_AMPS_HYSTERESIS_SECONDS = "fixed_amps_hysteresis_seconds"
 CONF_POWER_SENSOR = "power_sensor"
 CONF_PARTIAL_MIN_EXCESS = "partial_min_excess"
 CONF_CONNECTED_SENSOR = "connected_sensor"
-CONF_IS_BATTERY = "is_battery"
 
 # Hysteresis
 CONF_HYSTERESIS_ON_OFF_SECONDS = "hysteresis_on_off_seconds"
 CONF_AVERAGING_WINDOW = "averaging_window_seconds"
-
-# SoC
-CONF_MIN_SOC_OVERRIDE = "min_soc_override"
-CONF_IGNORE_BATTERY_PROTECTION = "ignore_battery_protection"
-CONF_SOC_HYSTERESIS_PERCENT = "soc_hysteresis_percent"

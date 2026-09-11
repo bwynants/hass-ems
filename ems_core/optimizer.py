@@ -1,9 +1,9 @@
 """Appliance optimizer for the EMS core — pure decision logic.
 
 ``optimize()`` and ``critical_shed()`` take a snapshot (appliance inputs, runtime
-state, budgets, energy/battery context, and ``now``) and return the decisions
+state, budgets, energy context, and ``now``) and return the decisions
 (active list, decided amps, fixed_amps commands). They mutate the passed
-``states`` dict — the same stateful hysteresis/latch semantics as before — but
+``states`` dict — the same stateful hysteresis semantics as before — but
 touch no Home Assistant APIs.
 """
 from __future__ import annotations
@@ -12,11 +12,11 @@ import logging
 
 from .const import (
     MODE_FORCED, MODE_PARTIAL_SOLAR, MODE_FULL_SOLAR, MODE_OFF_PEAK, MODE_UNMANAGED,
-    BATTERY_MODE_RELAXED, DEFAULT_VOLTAGE, CONTROLLER_UPDATE_INTERVAL,
+    DEFAULT_VOLTAGE, CONTROLLER_UPDATE_INTERVAL,
     FORCED_PEAK_HEADROOM_AMPS, SUNDOWN_SOLAR_W,
 )
 from .models import (
-    ApplianceInput, ApplianceState, EnergyInput, BatteryStatus,
+    ApplianceInput, ApplianceState, EnergyInput,
     SetFixedAmps, OptimizeResult, ShedResult,
 )
 from .energy import scaled_amps, breakeven
@@ -145,7 +145,6 @@ def _should_run(
     remaining_amps: float,
     cycle_excess: float,
     energy: EnergyInput,
-    battery: BatteryStatus,
     now,
 ) -> bool:
     if not app.connected:
@@ -159,65 +158,7 @@ def _should_run(
         name, avg_excess, remaining_amps, state.is_on, state.last_change,
     )
 
-    # SoC Protection. In ``relaxed`` mode a low battery doesn't hard-off the
-    # appliance; instead it may only run while solar surplus covers it.
-    soc_block_solar_only = False
-    if app.is_battery:
-        # The battery is the thing being protected; never block it on its own
-        # SoC or it could never charge back up. Clear any stale latch.
-        if state.soc_blocked:
-            state.soc_blocked = False
-            _LOGGER.debug("%s soc_blocked cleared (appliance is a battery)", name)
-    elif app.ignore_battery_protection:
-        if state.soc_blocked:
-            state.soc_blocked = False
-            _LOGGER.debug("%s soc_blocked cleared (battery protection ignored)", name)
-    elif battery.min_soc is not None:
-        if battery.soc is None:
-            # SoC sensor unavailable: fail safe by HOLDING the existing latch —
-            # a dropout must neither lift an active block (draining the low
-            # battery) nor set a new one on missing data.
-            if state.soc_blocked:
-                _LOGGER.debug("%s soc_blocked held (SoC sensor unavailable)", name)
-        else:
-            # Use the per-appliance override only when explicitly set (0 is
-            # valid), otherwise the threshold configured on the battery
-            # appliance(s).
-            override = app.min_soc_override
-            min_soc = override if override is not None else battery.min_soc
-            soc_hyst = app.soc_hysteresis_percent
-            # Clamp the clear threshold so it is always reachable (SoC maxes at 100%).
-            clear_at = min(min_soc + soc_hyst, 100)
-            if state.soc_blocked:
-                if battery.soc >= clear_at:
-                    state.soc_blocked = False
-                    _LOGGER.debug("%s soc_blocked cleared, soc=%s >= %s", name, battery.soc, clear_at)
-            elif battery.soc < min_soc:
-                state.soc_blocked = True
-                _LOGGER.debug("%s soc_blocked set, soc=%s < %s", name, battery.soc, min_soc)
-        if state.soc_blocked:
-            if battery.protection_mode == BATTERY_MODE_RELAXED:
-                soc_block_solar_only = True
-                _LOGGER.debug("%s soc-blocked (relaxed): solar-only until SoC recovers", name)
-            else:
-                _LOGGER.debug("%s blocked by SOC protection (strict)", name)
-                return False
-
-    if soc_block_solar_only:
-        # Battery low (relaxed): only run while the solar budget covers the
-        # appliance. full_solar keeps its sustained-average requirement too —
-        # the bypass must never be WEAKER than the mode's own gate, or a low
-        # battery would make a full_solar appliance easier to start.
-        required_a = app.min_amps
-        condition_met = remaining_amps >= required_a and (
-            app.mode != MODE_FULL_SOLAR or avg_excess >= required_a
-        )
-        # _basic_condition (the spike flag's only writer) is bypassed here;
-        # re-arm the flag so the one-shot INFO log still fires on the next
-        # genuine transient spike after SoC recovers.
-        state.full_solar_spike = False
-    else:
-        condition_met = _basic_condition(app, state, avg_excess, remaining_amps, energy)
+    condition_met = _basic_condition(app, state, avg_excess, remaining_amps, energy)
     _LOGGER.debug("%s condition_met=%s", name, condition_met)
 
     # Already in the desired state: nothing to do, leave the timer untouched.
@@ -250,13 +191,12 @@ def optimize(
     excess_amps: float,
     peak_amps: float | None,
     energy: EnergyInput,
-    battery: BatteryStatus,
     now,
     hold_ramp: bool = False,
 ) -> OptimizeResult:
     """Allocate the surplus across appliances in priority order.
 
-    Mutates ``states`` (hysteresis timers, SoC latch, fixed_amps tracking).
+    Mutates ``states`` (hysteresis timers, fixed_amps tracking).
     Call :func:`record_excess` first each cycle to roll the excess into the
     averaging history. Returns the active appliance uids, the draw decided this
     cycle, and the fixed_amps write commands for the shell to apply.
@@ -335,7 +275,7 @@ def optimize(
                 state.last_fixed_amps = None
                 state.last_fixed_amps_change = None
                 continue
-        if _should_run(app, state, remaining, excess_amps, energy, battery, now):
+        if _should_run(app, state, remaining, excess_amps, energy, now):
             active.append(app.uid)
             active_names.append(name)
 

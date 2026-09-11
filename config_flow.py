@@ -10,9 +10,6 @@ from homeassistant.core import callback
 from homeassistant.helpers.selector import (
     EntitySelector,
     EntitySelectorConfig,
-    SelectSelector,
-    SelectSelectorConfig,
-    SelectSelectorMode,
 )
 
 from homeassistant.config_entries import (
@@ -24,22 +21,15 @@ from homeassistant.config_entries import (
 from .const import (
     DOMAIN,
     SUBENTRY_TYPE_APPLIANCE,
-    BATTERY_PROTECTION_MODES,
     DEFAULT_PRIORITY,
     DEFAULT_FIXED_AMPS_HYSTERESIS_SECONDS,
-    DEFAULT_MIN_SOC,
-    DEFAULT_BATTERY_MODE,
     DEFAULT_HYSTERESIS,
     DEFAULT_AVERAGING,
-    DEFAULT_IGNORE_PROTECTION,
     CONF_SOLAR_PRODUCTION,
     CONF_HOUSE_LOAD,
     CONF_GRID_EXPORT,
-    CONF_BATTERY_SOC_SENSOR,
     CONF_PEAK_TARIFF_SENSOR,
     CONF_VOLTAGE,
-    CONF_MIN_SOC,
-    CONF_BATTERY_PROTECTION_MODE,
     CONF_NAME,
     CONF_ENTITY_ID,
     CONF_PRIORITY,
@@ -50,11 +40,6 @@ from .const import (
     CONF_CONNECTED_SENSOR,
     CONF_HYSTERESIS_ON_OFF_SECONDS,
     CONF_AVERAGING_WINDOW,
-    CONF_MIN_SOC_OVERRIDE,
-    CONF_IGNORE_BATTERY_PROTECTION,
-    CONF_SOC_HYSTERESIS_PERCENT,
-    CONF_IS_BATTERY,
-    DEFAULT_IS_BATTERY,
     CONF_DEMAND_POWER_CURRENT_PEAK_SENSOR,
     CONF_DEMAND_POWER_CONSUMED_SENSOR,
     CONF_DEMAND_MONTH_MAX_SENSOR,
@@ -91,16 +76,6 @@ BINARY_SENSOR_ENTITY_SELECTOR = EntitySelector(
 SENSOR_ONLY_SELECTOR = EntitySelector(
     EntitySelectorConfig(domain="sensor")
 )
-# Translated dropdown for the battery protection mode (renders the
-# selector.battery_protection_mode strings instead of raw values).
-BATTERY_MODE_SELECTOR = SelectSelector(
-    SelectSelectorConfig(
-        options=BATTERY_PROTECTION_MODES,
-        translation_key="battery_protection_mode",
-        mode=SelectSelectorMode.DROPDOWN,
-    )
-)
-
 
 # ---------------------------------------------------------------------------
 # Schema-marker builders
@@ -191,16 +166,6 @@ def _appliance_schema(current: dict | None) -> vol.Schema:
         # Hysteresis
         _default_marker(CONF_HYSTERESIS_ON_OFF_SECONDS, current, DEFAULT_HYSTERESIS): vol.All(int, vol.Range(min=0)),
         _default_marker(CONF_AVERAGING_WINDOW, current, DEFAULT_AVERAGING): vol.All(int, vol.Range(min=30)),
-        # SoC
-        _suggest_marker(CONF_MIN_SOC_OVERRIDE, current): vol.All(int, vol.Range(0, 100)),
-        _default_marker(CONF_IGNORE_BATTERY_PROTECTION, current, DEFAULT_IGNORE_PROTECTION): bool,
-        _suggest_marker(CONF_SOC_HYSTERESIS_PERCENT, current): vol.All(int, vol.Range(0, 20)),
-        # Battery: when enabled, this appliance provides the SoC sensor and
-        # protection threshold used to gate the other appliances.
-        _default_marker(CONF_IS_BATTERY, current, DEFAULT_IS_BATTERY): bool,
-        _suggest_marker(CONF_BATTERY_SOC_SENSOR, current): SENSOR_ENTITY_SELECTOR,
-        _default_marker(CONF_MIN_SOC, current, DEFAULT_MIN_SOC): vol.All(int, vol.Range(0, 100)),
-        _default_marker(CONF_BATTERY_PROTECTION_MODE, current, DEFAULT_BATTERY_MODE): BATTERY_MODE_SELECTOR,
     })
 
 
@@ -388,9 +353,6 @@ class OptionsFlowHandler(ConfigSubentryFlow):
                 CONF_POWER_SENSOR,
                 CONF_PARTIAL_MIN_EXCESS,
                 CONF_CONNECTED_SENSOR,
-                CONF_MIN_SOC_OVERRIDE,
-                CONF_SOC_HYSTERESIS_PERCENT,
-                CONF_BATTERY_SOC_SENSOR,
             ):
                 if key not in user_input:
                     self._data.pop(key, None)

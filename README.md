@@ -1,6 +1,6 @@
 # Energy Management System
 
-A Home Assistant custom integration (**EMS**) that automatically manages household appliances based on solar production, battery state of charge (SoC), grid export, and time-of-use tariffs.
+A Home Assistant custom integration (**EMS**) that automatically manages household appliances based on solar production, grid export, and time-of-use tariffs.
 
 ---
 
@@ -10,7 +10,6 @@ A Home Assistant custom integration (**EMS**) that automatically manages househo
 - **Per-appliance runtime modes** — `partial_solar`, `forced`, `full_solar`, `off_peak`, or `unmanaged`, selectable from the HA UI and persisted across restarts.
 - **Hysteresis & debounce** — configurable on/off delay and minimum switch interval prevent rapid cycling.
 - **Averaging window** — excess power is averaged over a rolling window to smooth out transient spikes.
-- **Battery SoC protection** — appliances are blocked when battery drops below a configurable minimum, with hysteresis to avoid flapping.
 - **Capacity-tariff (peak) protection** — appliance amps are progressively lowered (or the appliance turned off) using the quarter-hour demand prediction so the monthly peak is never reached; a Critical backstop forces everything off if needed.
 - **Off-peak awareness** — appliances in `off_peak` mode run freely during off-peak hours; a breakeven calculation gates them during peak hours.
 - **Connection sensor** — optional per-appliance binary sensor to skip appliances that are physically disconnected.
@@ -21,7 +20,7 @@ A Home Assistant custom integration (**EMS**) that automatically manages househo
 
 - Home Assistant 2026.8.0 or later. 2026.8 reworked the device registry so a device belongs to exactly one config entry and at most one subentry; EMS uses the new `via_device_id` link, which does not exist on earlier cores.
 - A sensor entity providing **solar production** in Watts (required).
-- Optional: house load sensor, net grid power sensor (import positive / export negative), battery SoC sensor, peak-tariff sensor (`on` during peak hours).
+- Optional: house load sensor, net grid power sensor (import positive / export negative), peak-tariff sensor (`on` during peak hours).
 
 ---
 
@@ -58,8 +57,6 @@ A Home Assistant custom integration (**EMS**) that automatically manages househo
 | `gain_export` | ❌ | Sensor/number entity with the compensation per exported kWh, €/kWh (unset: `0.10`). Read every cycle (dynamic tariffs work); the three prices drive the `off_peak`-mode breakeven decision during peak hours |
 | `debug_log` | ❌ | When enabled, writes the full per-cycle decision trace to `ems_debug.log` in the config dir (2 MB × 3 rotation). **Off by default** — opt-in, since it forces DEBUG logging and disk I/O |
 
-> **Battery protection** is configured per-appliance, not globally. Add an appliance and flag it as a battery (`is_battery`); it then supplies the SoC sensor, threshold (`min_soc`) and protection mode used to block the other appliances. See *Adding Appliances* below.
-
 > **Quarterly demand (capacity tariff).** When the three demand source sensors are set, EMS exposes native entities for the Belgian *capaciteitstarief*: `Quarterly Demand Estimate`, `Quarterly Demand Month Max`, `Quarterly Demand High Limit`, `Quarterly Demand Critical Limit`, `Max Power To Peak Limit`, and binary sensors `Quarterly Demand High` / `Quarterly Demand Critical`. They refresh every ~10 s. Peak-aware control is **always on** (it simply has no effect until the demand sensors are configured). The optimizer scales each appliance's `fixed_amps` setpoint against the **High limit as a fixed grid ceiling** — keeping total grid demand under it *at every instant*, which by definition keeps every quarter's average under it too. The High limit (not `Max Power To Peak Limit`) is used deliberately: it's constant, so it can't balloon or collapse for a cycle at the quarter boundary (when the current-average source lags the reset) and spuriously shed a running appliance. (Base load is accounted via the signed surplus budget, so the appliance's own draw isn't double-counted.) It **progressively lowers** the setpoint (and turns the appliance off when even the minimum won't fit) so demand stays under the High limit, and force-stops all managed appliances as a backstop if demand still reaches **Critical**. `Max Power To Peak Limit` remains a monitoring sensor. Threshold values are entered as plain numbers (no `input_number` helper needed).
 
 Excess power (amps) is calculated from the net grid power when a grid sensor is set,
@@ -90,13 +87,6 @@ After setup, open the EMS **Options** to add appliances one at a time.
 | `connected_sensor` | ❌ | Binary sensor — `off` means appliance is disconnected and will be skipped |
 | `hysteresis_seconds` | ❌ | Seconds to hold state before allowing next change (default: `120`) |
 | `averaging_window_seconds` | ❌ | Rolling window in seconds for excess power averaging (default: `180`) |
-| `min_soc_override` | ❌ | Per-appliance minimum SoC %, overrides the battery appliance's threshold |
-| `ignore_battery_protection` | ❌ | Skip SoC checks for this appliance (default: `false`) |
-| `soc_hysteresis_percent` | ❌ | SoC % above `min_soc` required to re-enable after block (default: `5`) |
-| `is_battery` | ❌ | Flag this appliance as a battery (default: `false`). A battery supplies the SoC sensor and threshold that protect the other appliances, and is itself never blocked by SoC protection |
-| `battery_soc_sensor` | ❌ | (Battery only) State-of-charge sensor (%) for this battery |
-| `min_soc` | ❌ | (Battery only) Other appliances are blocked while this battery's SoC is below this value (default: `20`) |
-| `battery_protection_mode` | ❌ | (Battery only) `strict` or `relaxed` (default: `strict`) |
 
 ---
 
@@ -130,7 +120,7 @@ These EMS-wide entities are always created on the EMS device:
 
 | Entity | Type | Description |
 |---|---|---|
-| `sensor.energy_management_system_status` | Sensor | Number of currently active appliances; attributes include `excess_amps`, `soc`, `active_appliances`, `auto_switching`, `demand_high`, `demand_critical` |
+| `sensor.energy_management_system_status` | Sensor | Number of currently active appliances; attributes include `excess_amps`, `active_appliances`, `auto_switching`, `demand_high`, `demand_critical` |
 | `Managed Consumption` | Sensor (A) | Amps the managed appliances are currently drawing |
 | `Managed Consumption Power` | Sensor (kW) | The same managed draw, in kilowatts |
 | `Spare Amps` | Sensor (A) | Available surplus budget, **clamped to ≥ 0** (reads 0 while importing). The optimizer's internal `excess_amps` stays signed — this is the user-facing display only |
@@ -161,7 +151,7 @@ The coordinator polls every **10 seconds** (`CONTROLLER_UPDATE_INTERVAL`). Hyste
 
 A restart or reload must not disturb a running appliance, so the controller does two things before it decides anything.
 
-**It waits for its sources.** Home Assistant sets this integration up before the inverter, meter and power integrations have populated their entities, and a missing reading is indistinguishable from "no surplus". Until every configured source entity reports — grid, solar, house load, voltage, tariff, SoC, and each managed appliance's switch, power sensor, setpoint and connected sensor — the controller observes without commanding, and without feeding those blank readings into the averaging history. `Spare Amps` reads unknown during this window and the status sensor's `warming_up` attribute is `true`, listing what it is waiting on. The wait is capped at **180 seconds** (`STARTUP_GRACE_SECONDS`): past that it starts anyway and logs a warning naming whatever is still unavailable, so a deleted sensor can't stall control permanently. Critical quarter-hour demand overrides the wait, since shedding works off the appliances' own on/off state rather than the budget.
+**It waits for its sources.** Home Assistant sets this integration up before the inverter, meter and power integrations have populated their entities, and a missing reading is indistinguishable from "no surplus". Until every configured source entity reports — grid, solar, house load, voltage, tariff, and each managed appliance's switch, power sensor, setpoint and connected sensor — the controller observes without commanding, and without feeding those blank readings into the averaging history. `Spare Amps` reads unknown during this window and the status sensor's `warming_up` attribute is `true`, listing what it is waiting on. The wait is capped at **180 seconds** (`STARTUP_GRACE_SECONDS`): past that it starts anyway and logs a warning naming whatever is still unavailable, so a deleted sensor can't stall control permanently. Critical quarter-hour demand overrides the wait, since shedding works off the appliances' own on/off state rather than the budget.
 
 **It adopts what the appliances are already doing.** Each appliance's on/off state, current setpoint and hysteresis timers are restored from `.storage` and reconciled against the live entities (the physical state wins — an appliance may have been switched by hand while HA was down). A short restart therefore resumes mid-hysteresis-window rather than re-arming it; a long outage lets the window expire naturally. The first cycle after startup is a no-op for an appliance that should keep running, and a genuine off decision still has to outlast the hysteresis window.
 
@@ -175,7 +165,6 @@ Look for `control starting; adopted appliance state: …` in the log to see exac
 |---|---|
 | Appliance never turns on | Verify `solar_production_sensor` is available and returning a numeric value |
 | Appliance turns on/off rapidly | Increase `hysteresis_seconds` |
-| Appliance blocked despite sufficient solar | Check `battery_soc_sensor` — SoC may be below `min_soc` |
 | All appliances forced off | Quarter-hour demand reached **Critical** — check `Quarterly Demand Critical` and your `peak_critical_safety` margin |
 | Appliance amps keep dropping | Quarter-hour demand near the **High** limit — the optimizer is throttling to avoid the peak (`Max Power To Peak Limit`) |
 | Setpoints stuck / "grid sensors stale" warning | Neither the `grid_export_sensor` nor the `demand_power_consumed_sensor` has reported in >600 s (frozen feed). The optimizer holds setpoints (no ramp-up) to avoid a runaway; fix the sensor's connection. Both directions of flow are checked, and the window is deliberately wide: meters that publish only on change (ESPHome with a delta filter, MQTT, a template chain off either) go quiet for minutes on a flat load while perfectly healthy. A feed that really dies goes `unavailable` instead, which the read fallback and the start-up gate handle |

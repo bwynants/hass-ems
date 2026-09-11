@@ -41,10 +41,6 @@ class ApplianceInput:
     connected: bool
     entity_on: bool
     measured_amps: float | None
-    is_battery: bool
-    ignore_battery_protection: bool
-    min_soc_override: float | None
-    soc_hysteresis_percent: float
     # True when a power sensor is configured for this appliance. When it is but
     # ``measured_amps`` is None (sensor unavailable), the surplus add-back must
     # NOT fall back to the fixed_amps setpoint — see energy.actual_amps.
@@ -53,10 +49,6 @@ class ApplianceInput:
     # entity's own ``step``. The default only applies when that entity doesn't
     # publish one.
     fixed_amps_step: float = FIXED_AMPS_STEP
-    # Battery-only fields (populated when is_battery is True).
-    battery_soc: float | None = None
-    battery_min_soc: float | None = None
-    battery_protection_mode: str | None = None
 
 
 @dataclass
@@ -69,7 +61,6 @@ class ApplianceState:
     excess_history: deque = field(
         default_factory=lambda: deque(maxlen=APPLIANCE_HISTORY_MAXLEN)
     )
-    soc_blocked: bool = False
     # Last real measured draw (amps), held across a power-sensor dropout so the
     # add-back doesn't fall through to the commanded setpoint (runaway guard).
     last_measured_amps: float | None = None
@@ -90,14 +81,6 @@ class EnergyInput:
     cost_peak: float
     cost_offpeak: float
     gain_export: float
-
-
-@dataclass
-class BatteryStatus:
-    """Derived battery SoC-protection status (None fields ⇒ no battery)."""
-    soc: float | None = None
-    min_soc: float | None = None
-    protection_mode: str | None = None
 
 
 @dataclass
