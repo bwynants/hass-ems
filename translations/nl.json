@@ -212,6 +212,9 @@
       },
       "force_charging": {
         "name": "Geforceerd laden actief"
+      },
+      "not_consuming": {
+        "name": "Verbruikt niet"
       }
     },
     "switch": {

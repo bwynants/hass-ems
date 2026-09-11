@@ -377,6 +377,8 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
             # No decision yet -> the force-charge binary sensors read unavailable.
             "forced_appliance_ids": None,
             "forced_appliances": [],
+            "not_consuming_appliance_ids": None,
+            "not_consuming_appliances": [],
             "active_appliances": on_names,
             "appliances": appliances,
             "auto_switching": self.enabled,
@@ -502,6 +504,8 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
                 "excess_kw": 0,
                 "forced_appliance_ids": [],
                 "forced_appliances": [],
+                "not_consuming_appliance_ids": [],
+                "not_consuming_appliances": [],
                 "active_appliances": kept_names,
                 "appliances": appliances,
                 "auto_switching": self.enabled,
@@ -524,6 +528,8 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
                 "excess_kw": _kw(excess_amps),
                 "forced_appliance_ids": [],
                 "forced_appliances": [],
+                "not_consuming_appliance_ids": [],
+                "not_consuming_appliances": [],
                 "active_appliances": [],
                 "appliances": appliances,
                 "auto_switching": False,
@@ -580,6 +586,9 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
             # the per-appliance binary sensors, names for the status attribute.
             "forced_appliance_ids": list(result.forced),
             "forced_appliances": forced_names,
+            # Switched on by EMS but drawing nothing past the grace period.
+            "not_consuming_appliance_ids": list(result.not_consuming),
+            "not_consuming_appliances": [names_by_uid.get(u, u) for u in result.not_consuming],
             "active_appliances": active_names,
             "appliances": appliances,
             "auto_switching": True,

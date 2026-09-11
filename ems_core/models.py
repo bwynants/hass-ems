@@ -81,6 +81,9 @@ class ApplianceState:
     # stays plugged in (cloud car sensors go `unknown` intermittently); cleared
     # on disconnect so it can never carry over to another car.
     last_soc: float | None = None
+    # When the appliance was first seen switched on by EMS yet drawing nothing;
+    # None while it is off or drawing normally. Drives the "not consuming" flag.
+    not_consuming_since: datetime | None = None
 
 
 @dataclass
@@ -127,6 +130,9 @@ class OptimizeResult:
     # Uids whose mode the car-SoC rule overrode to `forced` this cycle —
     # reported even when the peak gate then kept the appliance off.
     forced: list[str] = field(default_factory=list)
+    # Uids EMS has switched on that have drawn (almost) nothing for longer than
+    # the grace period — the "should be consuming but isn't" problem flag.
+    not_consuming: list[str] = field(default_factory=list)
 
 
 @dataclass

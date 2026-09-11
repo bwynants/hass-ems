@@ -10,6 +10,7 @@ A Home Assistant custom integration (**EMS**) that automatically manages househo
 - **Per-appliance runtime modes** — `partial_solar`, `forced`, `full_solar`, `off_peak`, or `unmanaged`, selectable from the HA UI and persisted across restarts.
 - **Hysteresis & debounce** — configurable on/off delay and minimum switch interval prevent rapid cycling.
 - **Averaging window** — excess power is averaged over a rolling window to smooth out transient spikes.
+- **Not-consuming alarm** — a per-appliance problem sensor that trips when EMS has switched an appliance on but it draws nothing for 5 minutes, excluding a car that is nearly full.
 - **EV force-charge below SoC** — give an appliance the car's state-of-charge sensor and it becomes an EV charger: while the car is plugged in and below a per-appliance threshold (a `number` entity, default 0 = off) it charges from the grid as in `forced` mode, then reverts to its own mode. Peak protection still applies.
 - **Capacity-tariff (peak) protection** — appliance amps are progressively lowered (or the appliance turned off) using the quarter-hour demand prediction so the monthly peak is never reached; a Critical backstop forces everything off if needed.
 - **Off-peak awareness** — appliances in `off_peak` mode run freely during off-peak hours; a breakeven calculation gates them during peak hours.
@@ -117,6 +118,7 @@ For each configured appliance EMS creates, on that appliance's own device:
 | `select.<name>_mode` | Select | Runtime mode selector (`partial_solar` / `forced` / `full_solar` / `off_peak` / `unmanaged`) |
 | `number.<name>_force_charge_below` | Number (%) | *EV chargers only* (appliance has `ev_soc_sensor`). Car SoC below which a plugged-in car is force-charged; 0 = off. Persisted per appliance, applied on the next cycle |
 | `binary_sensor.<name>_force_charging` | Binary sensor | *EV chargers only.* On while the SoC rule overrides the mode to `forced` this cycle — i.e. EMS *wants* to force-charge; the charger may still be throttled or held off by the quarter-hour peak limit. Off during Critical shed or with auto-switching off; unavailable during startup warm-up |
+| `binary_sensor.<name>_not_consuming` | Binary sensor (problem) | *Appliances with a `power_sensor` only.* On when EMS has switched the appliance on but it has drawn less than 0.5 A for 5 minutes (start-up grace). Never on a power-sensor dropout, and not while the car's SoC is ≥ 95 % — tapering off near full is normal. Off when EMS isn't commanding; unavailable during warm-up |
 
 > **Upgrading from 0.2.x.** The mode selects move off the EMS device onto their appliance device. Entity ids, names, and history are unchanged, but dashboard cards or automations that target the EMS *device* rather than the entity will need repointing.
 
@@ -124,7 +126,7 @@ These EMS-wide entities are always created on the EMS device:
 
 | Entity | Type | Description |
 |---|---|---|
-| `sensor.energy_management_system_status` | Sensor | Number of currently active appliances; attributes include `excess_amps`, `active_appliances`, `forced_appliances` (force-charged by the car-SoC rule), `auto_switching`, `demand_high`, `demand_critical` |
+| `sensor.energy_management_system_status` | Sensor | Number of currently active appliances; attributes include `excess_amps`, `active_appliances`, `forced_appliances` (force-charged by the car-SoC rule), `not_consuming_appliances` (switched on but not drawing), `auto_switching`, `demand_high`, `demand_critical` |
 | `Managed Consumption` | Sensor (A) | Amps the managed appliances are currently drawing |
 | `Managed Consumption Power` | Sensor (kW) | The same managed draw, in kilowatts |
 | `Spare Amps` | Sensor (A) | Available surplus budget, **clamped to ≥ 0** (reads 0 while importing). The optimizer's internal `excess_amps` stays signed — this is the user-facing display only |
@@ -169,6 +171,7 @@ Look for `control starting; adopted appliance state: …` in the log to see exac
 |---|---|
 | Appliance never turns on | Verify `solar_production_sensor` is available and returning a numeric value |
 | Appliance turns on/off rapidly | Increase `hysteresis_seconds` |
+| `Not consuming` is on | EMS switched the appliance on but its power sensor reads ~0 for 5+ minutes: charger fault, cable, or the car itself refusing (e.g. a charge limit set *in the car* below 95 % — the SoC exemption only covers ≥ 95 %). Check the appliance's own status before suspecting EMS |
 | Car plugged in below the threshold but not charging | Is `Force charging` `on`? If **off**: the SoC sensor is `unknown`, the threshold is 0, the connected sensor is off, or the mode is `unmanaged`. If **on** but the charger is off/throttled: the quarter-hour **High** limit is blocking it (`Quarterly Demand High Limit`, `Max Power To Peak Limit`). Note forced/EV charging only scales up on grid power when the quarterly-demand sensors are configured; without them it imports at `min_amps` only |
 | All appliances forced off | Quarter-hour demand reached **Critical** — check `Quarterly Demand Critical` and your `peak_critical_safety` margin |
 | Appliance amps keep dropping | Quarter-hour demand near the **High** limit — the optimizer is throttling to avoid the peak (`Max Power To Peak Limit`) |

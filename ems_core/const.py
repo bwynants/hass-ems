@@ -45,6 +45,14 @@ SUNDOWN_SOLAR_W = 100.0
 # appliance were in `forced` mode. 0 disables the override (nothing is < 0).
 DEFAULT_FORCE_CHARGE_BELOW_SOC = 0
 
+# "Should be consuming but isn't" diagnostic. An appliance EMS has switched on
+# that draws less than NOT_CONSUMING_AMPS for NOT_CONSUMING_GRACE_SECONDS is
+# flagged — the grace covers a charger's start-up delay. A car at or above
+# SOC_FULL_PERCENT is exempt: tapering off near full is normal, not a fault.
+NOT_CONSUMING_AMPS = 0.5
+NOT_CONSUMING_GRACE_SECONDS = 300
+SOC_FULL_PERCENT = 95
+
 # Off-peak breakeven default tariff rates (€/kWh). Not exposed in the UI, so the
 # breakeven gate always uses these unless a config override is supplied.
 DEFAULT_COST_PEAK = 0.40

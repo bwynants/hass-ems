@@ -78,6 +78,8 @@ class SolarApplianceStatusSensor(EMSEntity, SensorEntity):
             "active_appliances": data.get("active_appliances", []),
             # Appliances currently force-charged by the car-SoC rule.
             "forced_appliances": data.get("forced_appliances", []),
+            # Switched on by EMS but not drawing anything (see binary sensors).
+            "not_consuming_appliances": data.get("not_consuming_appliances", []),
             "auto_switching": data.get("auto_switching"),
             "demand_high": demand.get("high"),
             "demand_critical": demand.get("critical"),

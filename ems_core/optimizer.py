@@ -14,6 +14,7 @@ from .const import (
     MODE_FORCED, MODE_PARTIAL_SOLAR, MODE_FULL_SOLAR, MODE_OFF_PEAK, MODE_UNMANAGED,
     DEFAULT_VOLTAGE, CONTROLLER_UPDATE_INTERVAL,
     FORCED_PEAK_HEADROOM_AMPS, SUNDOWN_SOLAR_W,
+    NOT_CONSUMING_AMPS, NOT_CONSUMING_GRACE_SECONDS, SOC_FULL_PERCENT,
 )
 from .models import (
     ApplianceInput, ApplianceState, EnergyInput,
@@ -73,6 +74,30 @@ def effective_mode(app: ApplianceInput) -> str:
     mode the user selected; it reverts once the threshold is reached.
     """
     return MODE_FORCED if force_charge_active(app) else app.mode
+
+
+def not_consuming(app: ApplianceInput, state: ApplianceState, active: bool, now) -> bool:
+    """Track "EMS switched it on, but it isn't drawing anything".
+
+    Only judged for appliances with a power sensor that are active this cycle;
+    a start-up delay is covered by the grace period, a power-sensor dropout
+    (``measured_amps`` None) is never a fault, and a car at or above
+    SOC_FULL_PERCENT tapering off is normal. Anything else resets the timer.
+    Mutates ``state.not_consuming_since``.
+    """
+    if (
+        not active
+        or not app.has_power_sensor
+        or app.measured_amps is None
+        or app.measured_amps >= NOT_CONSUMING_AMPS
+        or (app.soc is not None and app.soc >= SOC_FULL_PERCENT)
+    ):
+        state.not_consuming_since = None
+        return False
+    if state.not_consuming_since is None:
+        state.not_consuming_since = now
+        return False
+    return (now - state.not_consuming_since).total_seconds() >= NOT_CONSUMING_GRACE_SECONDS
 
 
 def _basic_condition(
@@ -417,13 +442,25 @@ def optimize(
             state.last_fixed_amps = None
             state.last_fixed_amps_change = None
 
+    # One pass over ALL appliances (unmanaged and peak-gated ones included) so an
+    # appliance that stops being active always resets its not-consuming timer.
+    active_set = set(active)
+    flagged = [
+        app.uid for app in appliances
+        if not_consuming(app, states.setdefault(app.uid, ApplianceState()),
+                         app.uid in active_set, now)
+    ]
+    if flagged:
+        _LOGGER.debug("switched on but not consuming: %s", flagged)
+
     _LOGGER.debug(
         "optimize done: active=%s | leftover excess=%.2f A | leftover peak=%s",
         active_names, remaining,
         "off" if peak_remaining is None else f"{peak_remaining:.2f} A",
     )
     return OptimizeResult(
-        active=active, decided_amps=decided_amps, fixed_amps_commands=commands, forced=forced,
+        active=active, decided_amps=decided_amps, fixed_amps_commands=commands,
+        forced=forced, not_consuming=flagged,
     )
 
 

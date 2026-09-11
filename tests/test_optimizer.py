@@ -4,7 +4,9 @@ from datetime import datetime, timedelta
 
 from ems_core.optimizer import (
     optimize, critical_shed, record_excess, force_charge_active, effective_mode,
+    not_consuming,
 )
+from ems_core.const import NOT_CONSUMING_GRACE_SECONDS, SOC_FULL_PERCENT
 from ems_core.models import (
     ApplianceInput, ApplianceState, EnergyInput, SetFixedAmps, OptimizeResult,
 )
@@ -774,3 +776,97 @@ def test_force_charge_logs_transitions_once(caplog):
     released = [r for r in caplog.records if "force charge released" in r.getMessage()]
     assert len(forcing) == 1
     assert len(released) == 1
+
+
+# ---------------------------------------------------------------------------
+# "Switched on but not consuming" problem flag
+# ---------------------------------------------------------------------------
+
+GRACE = timedelta(seconds=NOT_CONSUMING_GRACE_SECONDS)
+
+
+def _idle(**kw):
+    # A forced appliance with a power sensor reading zero: EMS wants it on.
+    base = dict(mode=MODE_FORCED, has_power_sensor=True, measured_amps=0.0, entity_on=True)
+    base.update(kw)
+    return _app(**base)
+
+
+def _cycles(app_by_time, states):
+    last = None
+    for offset, app in app_by_time:
+        last = optimize([app], states, excess_amps=10.0, peak_amps=None,
+                        energy=_energy(), now=T0 + timedelta(seconds=offset))
+    return last
+
+
+def test_not_consuming_flags_after_grace_only():
+    states = {}
+    r = _cycles([(0, _idle())], states)
+    assert r.active == ["a"] and r.not_consuming == []          # timer just started
+    r = _cycles([(NOT_CONSUMING_GRACE_SECONDS - 1, _idle())], states)
+    assert r.not_consuming == []                                # still within grace
+    r = _cycles([(NOT_CONSUMING_GRACE_SECONDS, _idle())], states)
+    assert r.not_consuming == ["a"]                             # grace elapsed
+
+
+def test_not_consuming_resets_when_draw_returns():
+    states = {}
+    _cycles([(0, _idle())], states)
+    _cycles([(100, _idle(measured_amps=6.2))], states)          # drawing -> reset
+    assert states["a"].not_consuming_since is None
+    r = _cycles([(NOT_CONSUMING_GRACE_SECONDS + 100, _idle())], states)
+    assert r.not_consuming == []                                # timer restarted at +grace+100
+
+
+def test_not_consuming_exempt_when_car_nearly_full():
+    states = {}
+    full = _idle(soc=SOC_FULL_PERCENT, force_charge_below_soc=0)
+    _cycles([(0, full)], states)
+    r = _cycles([(NOT_CONSUMING_GRACE_SECONDS * 2, full)], states)
+    assert r.not_consuming == []
+    # Just under the "full" mark the taper exemption does not apply.
+    low = _idle(soc=SOC_FULL_PERCENT - 1, force_charge_below_soc=0)
+    states2 = {}
+    _cycles([(0, low)], states2)
+    r2 = _cycles([(NOT_CONSUMING_GRACE_SECONDS, low)], states2)
+    assert r2.not_consuming == ["a"]
+
+
+def test_not_consuming_requires_power_sensor_and_reading():
+    # No power sensor: unknowable, never flagged.
+    states = {}
+    _cycles([(0, _idle(has_power_sensor=False, measured_amps=None))], states)
+    r = _cycles([(NOT_CONSUMING_GRACE_SECONDS, _idle(has_power_sensor=False, measured_amps=None))], states)
+    assert r.not_consuming == []
+    # Power sensor dropout (None) is not a fault either.
+    states2 = {}
+    _cycles([(0, _idle(measured_amps=None))], states2)
+    r2 = _cycles([(NOT_CONSUMING_GRACE_SECONDS, _idle(measured_amps=None))], states2)
+    assert r2.not_consuming == []
+
+
+def test_not_consuming_only_when_ems_switched_it_on():
+    # partial_solar with no surplus: EMS keeps it OFF, so zero draw is expected.
+    states = {}
+    off = _idle(mode=MODE_PARTIAL_SOLAR)
+    for offset in (0, NOT_CONSUMING_GRACE_SECONDS):
+        r = optimize([off], states, excess_amps=-3.0, peak_amps=None,
+                     energy=_energy(), now=T0 + timedelta(seconds=offset))
+    assert r.active == [] and r.not_consuming == []
+    assert states["a"].not_consuming_since is None
+    # Unmanaged: left alone, never flagged, timer cleared.
+    states2 = {"a": ApplianceState(not_consuming_since=T0 - GRACE)}
+    r2 = optimize([_idle(mode=MODE_UNMANAGED)], states2, excess_amps=10.0, peak_amps=None,
+                  energy=_energy(), now=T0)
+    assert r2.not_consuming == []
+    assert states2["a"].not_consuming_since is None
+
+
+def test_not_consuming_pure_helper():
+    st = ApplianceState()
+    assert not_consuming(_idle(), st, active=True, now=T0) is False
+    assert st.not_consuming_since == T0
+    assert not_consuming(_idle(), st, active=True, now=T0 + GRACE) is True
+    assert not_consuming(_idle(), st, active=False, now=T0 + GRACE) is False
+    assert st.not_consuming_since is None

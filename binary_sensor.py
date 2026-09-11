@@ -5,7 +5,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
     BinarySensorDeviceClass,
 )
-from .const import DOMAIN, CONF_NAME, CONF_EV_SOC_SENSOR, get_appliances
+from .const import DOMAIN, CONF_NAME, CONF_EV_SOC_SENSOR, CONF_POWER_SENSOR, get_appliances
 from .entity import EMSEntity, EMSApplianceEntity
 from .coordinator import SolarApplianceCoordinator
 from .demand_coordinator import QuarterlyDemandCoordinator
@@ -24,15 +24,18 @@ async def async_setup_entry(hass, entry, async_add_entities):
         QuarterlyDemandBinarySensor(demand, entry.entry_id, key, translation_key)
         for key, translation_key in _DEMAND_BINARY_SENSORS
     )
-    # Per-appliance force-charge flag, EV chargers only. One call per appliance:
-    # config_subentry_id is per-call and ties the entity to the appliance device.
+    # Per-appliance flags. One call per appliance: config_subentry_id is
+    # per-call and ties the entity to the appliance device. Each flag only
+    # exists where it can be judged: force-charge needs a car SoC sensor,
+    # not-consuming needs a power sensor.
     for app in get_appliances(entry):
-        if not app.get(CONF_EV_SOC_SENSOR):
-            continue
-        async_add_entities(
-            [EVForceChargingBinarySensor(coordinator, app)],
-            config_subentry_id=app["subentry_id"],
-        )
+        entities = []
+        if app.get(CONF_EV_SOC_SENSOR):
+            entities.append(EVForceChargingBinarySensor(coordinator, app))
+        if app.get(CONF_POWER_SENSOR):
+            entities.append(NotConsumingBinarySensor(coordinator, app))
+        if entities:
+            async_add_entities(entities, config_subentry_id=app["subentry_id"])
 
 
 class QuarterlyDemandBinarySensor(EMSEntity, BinarySensorEntity):
@@ -97,3 +100,36 @@ class EVForceChargingBinarySensor(EMSApplianceEntity, BinarySensorEntity):
     def is_on(self) -> bool:
         data = self.coordinator.data or {}
         return self._appliance_id in (data.get("forced_appliance_ids") or [])
+
+
+class NotConsumingBinarySensor(EMSApplianceEntity, BinarySensorEntity):
+    """Problem: EMS switched this appliance on, but it isn't drawing anything.
+
+    Set by the core after a grace period (start-up delay), never on a power
+    sensor dropout, and not while the car is nearly full — tapering off there
+    is normal. Off when EMS isn't commanding (Critical shed, auto-switching
+    off); unavailable during the startup warm-up.
+    """
+
+    _attr_translation_key = "not_consuming"
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+
+    def __init__(self, coordinator: SolarApplianceCoordinator, appliance) -> None:
+        super().__init__(coordinator)
+        self._appliance_id = appliance["subentry_id"]
+        self._appliance_name = appliance[CONF_NAME]
+        self._attr_unique_id = f"{DOMAIN}_{self._appliance_id}_not_consuming"
+
+    @property
+    def available(self) -> bool:
+        data = self.coordinator.data
+        return bool(
+            super().available
+            and data
+            and data.get("not_consuming_appliance_ids") is not None
+        )
+
+    @property
+    def is_on(self) -> bool:
+        data = self.coordinator.data or {}
+        return self._appliance_id in (data.get("not_consuming_appliance_ids") or [])

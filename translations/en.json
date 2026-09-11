@@ -212,6 +212,9 @@
       },
       "force_charging": {
         "name": "Force charging"
+      },
+      "not_consuming": {
+        "name": "Not consuming"
       }
     },
     "switch": {
