@@ -497,7 +497,7 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
             return {
                 "excess_amps": 0,
                 "excess_kw": 0,
-                    "active_appliances": kept_names,
+                "active_appliances": kept_names,
                 "appliances": appliances,
                 "auto_switching": self.enabled,
                 "demand_critical": True,
@@ -517,7 +517,7 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
             return {
                 "excess_amps": round(excess_amps, 2),
                 "excess_kw": _kw(excess_amps),
-                    "active_appliances": [],
+                "active_appliances": [],
                 "appliances": appliances,
                 "auto_switching": False,
                 "managed_amps": round(managed_amps, 2),
