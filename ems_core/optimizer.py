@@ -13,7 +13,8 @@ import logging
 from .const import (
     MODE_FORCED, MODE_PARTIAL_SOLAR, MODE_FULL_SOLAR, MODE_OFF_PEAK, MODE_UNMANAGED,
     DEFAULT_VOLTAGE, CONTROLLER_UPDATE_INTERVAL,
-    FORCED_PEAK_HEADROOM_AMPS, SUNDOWN_SOLAR_W,
+    FORCED_PEAK_HEADROOM_AMPS, SUNDOWN_SOLAR_W, ON_OFF_HYSTERESIS_AMPS,
+    PEAK_GATE_SHED_CYCLES,
     NOT_CONSUMING_AMPS, NOT_CONSUMING_GRACE_SECONDS, SOC_FULL_PERCENT,
 )
 from .models import (
@@ -128,7 +129,12 @@ def _basic_condition(
         )
         return True
 
-    required_a = app.min_amps
+    # The amps the appliance must be able to draw. Starting carries a fixed
+    # ON_OFF_HYSTERESIS_AMPS margin on top of min_amps; staying on needs only
+    # min_amps itself. That 0.5 A gap is the on/off deadband — it is NOT the
+    # setpoint step (which follows the "ampere to use" entity), so a finely
+    # stepped charger still can't be flipped on and off by sub-amp noise.
+    required_a = app.min_amps if state.is_on else app.min_amps + ON_OFF_HYSTERESIS_AMPS
 
     if mode == MODE_FULL_SOLAR:
         # Solar-only: never imports from the grid, and no partial/off-peak
@@ -322,11 +328,19 @@ def optimize(
             forced_budget = None
 
         # Hard peak cap: if the appliance can't reach its minimum from the budget
-        # it may use, it can't run this cycle. The off is immediate (protective),
-        # but the state machine is kept consistent: the transition is recorded so
-        # re-activation is damped by the on/off hysteresis (no 10s relay flapping
-        # when headroom hovers around min), and the setpoint tracking is cleared
-        # so it comes back with a fresh write instead of the stale value.
+        # it may use, it can't run. An OFF appliance is blocked at once. A
+        # RUNNING one is shed only after PEAK_GATE_SHED_CYCLES consecutive short
+        # cycles (debounce): its own draw comes back into the budget from a
+        # power sensor that lags the grid meter, so the first cycle after a
+        # start sees the full import but only part of the add-back and the
+        # budget reads short for one cycle. Falling through in the grace cycles
+        # throttles it to min_amps (the budget is below min, so `scaled_amps`
+        # floors there) — a real overload is curbed immediately, only the
+        # switch-off waits. When the shed does happen the state machine is kept
+        # consistent: the transition is recorded so re-activation is damped by
+        # the on/off hysteresis (no 10s relay flapping when headroom hovers
+        # around min), and the setpoint tracking is cleared so it comes back
+        # with a fresh write instead of the stale value.
         #
         # The budget a solar mode may use is SOLAR PLUS the grid headroom, not the
         # headroom alone: the demand ceiling is a grid-import allowance (the same
@@ -338,7 +352,16 @@ def optimize(
         # the setpoint at min_a — and that top-up is what this gate bounds.
         if peak_remaining is not None:
             reachable = forced_budget if forced_additive else solar_avail + peak_remaining
-            if reachable < min_a:
+            if reachable >= min_a:
+                state.peak_gate_low_cycles = 0
+            elif state.is_on and state.peak_gate_low_cycles + 1 < PEAK_GATE_SHED_CYCLES:
+                state.peak_gate_low_cycles += 1
+                _LOGGER.info(
+                    "%s: budget too low (%.1f A solar+grid available < %d A min) "
+                    "for %d/%d cycles; throttling to min, not shedding yet",
+                    name, reachable, min_a, state.peak_gate_low_cycles, PEAK_GATE_SHED_CYCLES,
+                )
+            else:
                 _LOGGER.debug(
                     "  - %s (mode=%s): OFF, budget too low (%.1f A solar+grid available < %d A min)",
                     name, mode, reachable, min_a,
@@ -346,9 +369,12 @@ def optimize(
                 if state.is_on:
                     state.is_on = False
                     state.last_change = now
+                state.peak_gate_low_cycles = 0
                 state.last_fixed_amps = None
                 state.last_fixed_amps_change = None
                 continue
+        else:
+            state.peak_gate_low_cycles = 0
         if _should_run(app, state, remaining, excess_amps, energy, now, mode):
             active.append(app.uid)
             active_names.append(name)

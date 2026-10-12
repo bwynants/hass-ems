@@ -35,6 +35,19 @@ DEFAULT_PARTIAL_MIN_EXCESS = 1000
 # on/off oscillation; reserving this margin lets it run steadily below the cap.
 FORCED_PEAK_HEADROOM_AMPS = 1.0
 
+# Consecutive cycles the peak gate must see a RUNNING appliance's budget below
+# its min_amps before it is shed (3 cycles ≈ 30 s at the 10 s interval). The
+# appliance's own draw is added back into the budget from its power sensor,
+# which polls slower than the grid meter: for a cycle after a charger starts
+# the meter already shows the full import while the sensor still reports the
+# ramp, so the budget momentarily reads as "no room for the appliance" — and a
+# single-cycle gate shed it 10 s after every start. During the grace cycles
+# the appliance is throttled to min_amps, so a real overload is still curbed
+# at once; only the switch-off waits. A 30 s overshoot cannot move a
+# quarter-hour average meaningfully. Starting is never debounced: an OFF
+# appliance stays off the moment the budget is short.
+PEAK_GATE_SHED_CYCLES = 3
+
 # Solar production (W) at or below which it is treated as "sundown" (no solar to
 # follow). An off_peak-mode appliance, during off-peak hours at sundown, then
 # scales up on cheap grid like a forced appliance (additive budget, up to the
@@ -91,6 +104,13 @@ GRID_STALE_SECONDS = 600
 CONTROLLER_UPDATE_INTERVAL = 10
 FIXED_AMPS_DEADBAND = 0.25
 FIXED_AMPS_STEP = 0.5
+
+# On/off hysteresis (deadband) in amps, independent of the setpoint step above.
+# An appliance that is OFF starts only once min_amps + this margin is available;
+# once ON it stays on down to min_amps. Fixed rather than derived from the
+# entity's step: a 0.1 A charger would otherwise start and stop on 0.1 A of
+# noise around its minimum, damped only by the time-based hysteresis window.
+ON_OFF_HYSTERESIS_AMPS = 0.5
 
 # How much wall-clock history to keep per appliance for excess averaging, and
 # the resulting sample count (one sample per cycle). Derived from the cycle

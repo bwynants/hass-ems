@@ -84,6 +84,11 @@ class ApplianceState:
     # When the appliance was first seen switched on by EMS yet drawing nothing;
     # None while it is off or drawing normally. Drives the "not consuming" flag.
     not_consuming_since: datetime | None = None
+    # Consecutive cycles the peak gate has found this running appliance's
+    # budget below min_amps; it is shed at PEAK_GATE_SHED_CYCLES. Reset to 0
+    # whenever the budget covers min again or the appliance is off. Transient
+    # (not persisted): a restart re-counts from a fresh measurement.
+    peak_gate_low_cycles: int = 0
 
 
 @dataclass

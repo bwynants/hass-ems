@@ -6,7 +6,9 @@ from ems_core.optimizer import (
     optimize, critical_shed, record_excess, force_charge_active, effective_mode,
     not_consuming,
 )
-from ems_core.const import NOT_CONSUMING_GRACE_SECONDS, SOC_FULL_PERCENT
+from ems_core.const import (
+    NOT_CONSUMING_GRACE_SECONDS, SOC_FULL_PERCENT, PEAK_GATE_SHED_CYCLES,
+)
 from ems_core.models import (
     ApplianceInput, ApplianceState, EnergyInput, SetFixedAmps, OptimizeResult,
 )
@@ -376,6 +378,50 @@ def test_on_off_hysteresis_holds_recent_state():
     assert res2.active == []
 
 
+def test_start_needs_min_amps_plus_on_off_margin():
+    # On/off deadband: an OFF appliance starts only once min_amps + 0.5 A is
+    # available (partial threshold out of reach, so only the min-amps gate decides).
+    app = _app(mode=MODE_PARTIAL_SOLAR, min_amps=6, partial_min_excess=100_000)
+    states = {}
+    res = optimize([app], states, excess_amps=6.3, peak_amps=None,
+                   energy=_energy(), now=T0)
+    assert res.active == []
+    res = optimize([app], states, excess_amps=6.5, peak_amps=None,
+                   energy=_energy(), now=T0 + timedelta(seconds=10))
+    assert res.active == ["a"]
+
+
+def test_running_appliance_stays_on_down_to_min_amps():
+    # ...but once ON it holds down to min_amps itself, even after the time
+    # hysteresis window has expired — the 0.5 A gap is the hysteresis.
+    app = _app(mode=MODE_PARTIAL_SOLAR, min_amps=6, partial_min_excess=100_000,
+               hysteresis_seconds=0)
+    states = {}
+    optimize([app], states, excess_amps=8.0, peak_amps=None, energy=_energy(), now=T0)
+    assert states["a"].is_on is True
+    res = optimize([app], states, excess_amps=6.2, peak_amps=None,
+                   energy=_energy(), now=T0 + timedelta(seconds=10))
+    assert res.active == ["a"]
+    res = optimize([app], states, excess_amps=5.9, peak_amps=None,
+                   energy=_energy(), now=T0 + timedelta(seconds=20))
+    assert res.active == []
+
+
+def test_on_off_margin_is_independent_of_the_setpoint_step():
+    # A 0.1 A charger tracks its setpoint in 0.1 A steps, but the start margin
+    # is still the fixed 0.5 A, not half its step.
+    app = _app(mode=MODE_PARTIAL_SOLAR, min_amps=6, partial_min_excess=100_000,
+               has_fixed_amps=True, fixed_amps_value=6, fixed_amps_step=0.1)
+    states = {}
+    res = optimize([app], states, excess_amps=6.4, peak_amps=None,
+                   energy=_energy(), now=T0)
+    assert res.active == []
+    res = optimize([app], states, excess_amps=6.55, peak_amps=None,
+                   energy=_energy(), now=T0 + timedelta(seconds=10))
+    assert res.active == ["a"]
+    assert res.fixed_amps_commands == [SetFixedAmps("a", 6.5)]
+
+
 def test_activation_ignores_zero_measured():
     # An OFF appliance's power sensor reads 0.0 — the activation cycle must
     # budget the commanded/min draw, not the meaningless measured 0, or the
@@ -412,22 +458,78 @@ def test_peak_cap_off_goes_through_state_machine():
                   energy=_energy(), now=T0)
     assert r1.active == ["a"]
     assert r1.fixed_amps_commands == [SetFixedAmps("a", 16.0)]
-    # Headroom collapses below min -> hard off, state machine updated.
-    r2 = optimize([app], states, excess_amps=0.0, peak_amps=3.0,
-                  energy=_energy(), now=T0 + timedelta(seconds=10))
+    # Headroom collapses below min. The running appliance is NOT shed on the
+    # first short cycles (debounce); the setpoint write to min is held here by
+    # the 120 s fixed_amps window, see the throttle test below.
+    low = dict(excess_amps=0.0, peak_amps=3.0, energy=_energy())
+    for i in range(1, PEAK_GATE_SHED_CYCLES):
+        r = optimize([app], states, now=T0 + timedelta(seconds=10 * i), **low)
+        assert r.active == ["a"], f"grace cycle {i} must keep it on"
+        assert states["a"].is_on is True
+        assert states["a"].peak_gate_low_cycles == i
+    # The PEAK_GATE_SHED_CYCLES-th consecutive short cycle -> hard off, state
+    # machine updated.
+    t_off = T0 + timedelta(seconds=10 * PEAK_GATE_SHED_CYCLES)
+    r2 = optimize([app], states, now=t_off, **low)
     assert r2.active == []
     assert states["a"].is_on is False
     assert states["a"].last_fixed_amps is None
+    assert states["a"].peak_gate_low_cycles == 0
     # Headroom recovers within the hysteresis window -> stays off (damped).
     r3 = optimize([app], states, excess_amps=0.0, peak_amps=8.0,
-                  energy=_energy(), now=T0 + timedelta(seconds=20))
+                  energy=_energy(), now=t_off + timedelta(seconds=10))
     assert r3.active == []
     # Past the window -> on again with a FRESH setpoint write. Budget = 8 A peak
     # minus the 1 A forced reserve = 7 A -> written 6.5 A (not the stale 16).
     r4 = optimize([app], states, excess_amps=0.0, peak_amps=8.0,
-                  energy=_energy(), now=T0 + timedelta(seconds=90))
+                  energy=_energy(), now=t_off + timedelta(seconds=80))
     assert r4.active == ["a"]
     assert r4.fixed_amps_commands == [SetFixedAmps("a", 6.5)]
+
+
+def test_peak_gate_grace_resets_when_budget_recovers():
+    # The real-world case: a charger starts, the grid meter shows the full
+    # import at once but the charger's power sensor (slower poll) still reports
+    # the ramp, so the add-back is short and the budget reads below min for ONE
+    # cycle. The running appliance must survive that cycle, and the counter
+    # must reset once the budget covers min again — short cycles only shed
+    # when consecutive.
+    app = _app(mode=MODE_FORCED, min_amps=6, max_amps=16,
+               has_fixed_amps=True, fixed_amps_value=12.0, hysteresis_seconds=60,
+               fixed_amps_hold_seconds=0)
+    states = {"a": ApplianceState(is_on=True, last_change=T0 - timedelta(hours=1),
+                                  last_fixed_amps=12.0, last_fixed_amps_change=T0)}
+    energy = _energy()
+    # Stale add-back: budget -9 + (15.5 - 1) = 5.5 A < 6 A min. Kept on, but
+    # throttled to min meanwhile (a real overload is curbed at once).
+    r1 = optimize([app], states, excess_amps=-9.0, peak_amps=15.5,
+                  energy=energy, now=T0)
+    assert r1.active == ["a"]
+    assert r1.fixed_amps_commands == [SetFixedAmps("a", 6.0)]
+    assert states["a"].peak_gate_low_cycles == 1
+    # Fresh add-back: budget -2.7 + 14.5 = 11.8 A -> fine, counter cleared and
+    # the setpoint scales back up.
+    r2 = optimize([app], states, excess_amps=-2.7, peak_amps=15.5,
+                  energy=energy, now=T0 + timedelta(seconds=10))
+    assert r2.active == ["a"]
+    assert states["a"].peak_gate_low_cycles == 0
+    assert r2.fixed_amps_commands and r2.fixed_amps_commands[0].value >= 11.5
+    # Another isolated short cycle later starts counting from 1 again.
+    r3 = optimize([app], states, excess_amps=-9.0, peak_amps=15.5,
+                  energy=energy, now=T0 + timedelta(seconds=20))
+    assert r3.active == ["a"]
+    assert states["a"].peak_gate_low_cycles == 1
+
+
+def test_peak_gate_blocks_start_without_grace():
+    # Debounce applies to a RUNNING appliance only: one that is off must not be
+    # started on a budget that can't reach min, not even for a cycle.
+    app = _app(mode=MODE_FORCED, min_amps=6)
+    states = {"a": ApplianceState(is_on=False, last_change=T0 - timedelta(hours=1))}
+    res = optimize([app], states, excess_amps=0.0, peak_amps=3.0,
+                   energy=_energy(), now=T0)
+    assert res.active == []
+    assert states["a"].peak_gate_low_cycles == 0
 
 
 def test_solar_covered_draw_keeps_peak_headroom():
