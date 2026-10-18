@@ -259,6 +259,53 @@ def test_off_peak_free_run_still_respects_peak_headroom():
     assert res.active == []
 
 
+def test_importing_above_ceiling_blocks_start_in_solar_mode():
+    # 2026-10-18 09:31: Saturday (off-peak), hob on, house importing 3.9 kW
+    # (-17 A) against a 3.6 kW High limit (15.65 A). off_peak "runs free" on
+    # eligibility, but the gate must net the import out: -17 + 15.65 < 6 A min.
+    # Pre-fix the import was clamped away and the charger started.
+    app = _app(mode=MODE_OFF_PEAK, min_amps=6, max_amps=20)
+    states = {}
+    res = optimize([app], states, excess_amps=-17.0, peak_amps=15.65,
+                   energy=_energy(off_peak=True, solar_w=380.0), now=T0)
+    assert res.active == []
+    assert not states["a"].is_on
+
+
+def test_importing_below_ceiling_still_allows_grid_topup():
+    # Modest import (-2 A) with 15.65 A ceiling: -2 + 15.65 = 13.65 >= 6, so the
+    # headroom funds the min_amps floor and an eligible (off-peak, run-free)
+    # appliance runs at min rather than being blocked by the import alone.
+    app = _app(mode=MODE_OFF_PEAK, min_amps=6, max_amps=20,
+               has_fixed_amps=True, fixed_amps_value=6.0)
+    res = optimize([app], {}, excess_amps=-2.0, peak_amps=15.65,
+                   energy=_energy(off_peak=True, solar_w=380.0), now=T0)
+    assert res.active == ["a"]
+    assert res.fixed_amps_commands[0].value == 6.0
+
+
+def test_running_solar_mode_shed_after_debounce_when_import_exceeds_ceiling():
+    # A running off_peak charger: its own 6 A is added back, so excess reads the
+    # base-load import only (-17 A). Budget -17 + 15.65 < 6 -> throttled for
+    # PEAK_GATE_SHED_CYCLES - 1 cycles, then shed on the last one.
+    app = _app(mode=MODE_OFF_PEAK, min_amps=6, max_amps=20, entity_on=True,
+               measured_amps=6.0)
+    st = ApplianceState()
+    st.is_on = True
+    st.last_change = T0 - timedelta(seconds=3600)
+    states = {"a": st}
+    for i in range(PEAK_GATE_SHED_CYCLES - 1):
+        res = optimize([app], states, excess_amps=-17.0, peak_amps=15.65,
+                       energy=_energy(off_peak=True, solar_w=380.0),
+                       now=T0 + timedelta(seconds=10 * i))
+        assert res.active == ["a"], f"cycle {i} should still be throttled, not shed"
+    res = optimize([app], states, excess_amps=-17.0, peak_amps=15.65,
+                   energy=_energy(off_peak=True, solar_w=380.0),
+                   now=T0 + timedelta(seconds=10 * (PEAK_GATE_SHED_CYCLES - 1)))
+    assert res.active == []
+    assert not states["a"].is_on
+
+
 def test_off_peak_night_scales_like_forced():
     # off_peak mode, off-peak hours, sundown (no solar): scales up on cheap grid
     # like forced (additive budget, up to max within the peak limit), not min.

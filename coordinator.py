@@ -302,9 +302,12 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
         limit at every instant keeps every quarter's average under it too.
 
         Base load is not subtracted here: ``excess_amps`` (the optimizer's
-        ``remaining``) already nets it out, so ``forced_budget = remaining +
-        ceiling`` is the true max draw. Max Power To Peak stays a monitoring
-        sensor only.
+        ``remaining``) already nets it out — it is SIGNED, negative while the
+        house imports — so ``remaining + ceiling`` is the true max draw. The
+        optimizer must use the signed value in every mode: the forced path
+        always did, the solar/off-peak path once clamped it at 0 and read the
+        whole ceiling as headroom while importing above it. Max Power To Peak
+        stays a monitoring sensor only.
         """
         demand = self._demand_data()
         if not demand or voltage <= 0:

@@ -342,16 +342,29 @@ def optimize(
         # around min), and the setpoint tracking is cleared so it comes back
         # with a fresh write instead of the stale value.
         #
-        # The budget a solar mode may use is SOLAR PLUS the grid headroom, not the
-        # headroom alone: the demand ceiling is a grid-import allowance (the same
-        # reasoning the deduction below applies), so surplus-funded draw must not
-        # be gated on it. Without the solar term a sunny appliance was switched
-        # off whenever the quarter-hour headroom fell under min_amps, despite
-        # importing nothing. The headroom still matters here because a solar mode
-        # DOES import when the surplus is below min_amps — `scaled_amps` floors
-        # the setpoint at min_a — and that top-up is what this gate bounds.
+        # The budget a solar mode may use is the SIGNED surplus plus the grid
+        # headroom, not the headroom alone: the demand ceiling is a grid-import
+        # allowance (the same reasoning the deduction below applies), so
+        # surplus-funded draw must not be gated on it. Without the solar term a
+        # sunny appliance was switched off whenever the quarter-hour headroom
+        # fell under min_amps, despite importing nothing. The headroom still
+        # matters here because a solar mode DOES import when the surplus is
+        # below min_amps — `scaled_amps` floors the setpoint at min_a — and that
+        # top-up is what this gate bounds.
+        #
+        # SIGNED, not clamped at 0: a negative `remaining` is what the house is
+        # already importing (the add-back has restored the appliance's own
+        # draw, so it is base load only). The ceiling is the High limit as a
+        # fixed grid ceiling — see the coordinator's `_get_peak_amps` — and
+        # that is only a ceiling if the current import counts against it.
+        # Clamping it away let an `off_peak` charger start into a 3.9 kW base
+        # load on a 3.6 kW High limit (2026-10-18 09:31): the gate read the
+        # full 15.6 A of ceiling, the critical backstop fired 7 minutes later,
+        # and the quarter set a new monthly peak. The forced path has always
+        # netted the import out (`forced_budget = remaining + headroom`); this
+        # makes the two paths agree.
         if peak_remaining is not None:
-            reachable = forced_budget if forced_additive else solar_avail + peak_remaining
+            reachable = forced_budget if forced_additive else remaining + peak_remaining
             if reachable >= min_a:
                 state.peak_gate_low_cycles = 0
             elif state.is_on and state.peak_gate_low_cycles + 1 < PEAK_GATE_SHED_CYCLES:
@@ -384,18 +397,19 @@ def optimize(
             else:
                 scaled = scaled_amps(min_a, app.max_amps, remaining)
                 if peak_remaining is not None:
-                    # Same solar-plus-grid bound as the gate above — NOT the grid
-                    # headroom alone, which would throttle a setpoint the sun is
-                    # paying for (a 20 A surplus chopped to a 15 A demand
-                    # ceiling while the meter reads zero import).
+                    # Same signed surplus-plus-grid bound as the gate above — NOT
+                    # the grid headroom alone, which would throttle a setpoint
+                    # the sun is paying for (a 20 A surplus chopped to a 15 A
+                    # demand ceiling while the meter reads zero import).
                     #
                     # With today's `scaled_amps` this is an invariant rather than
                     # an active throttle (`scaled` is already at most
-                    # `max(remaining, min_a)`, and `remaining <= solar_avail`), so
-                    # it is kept as a guard on the budget plumbing, not as the
-                    # mechanism that enforces the demand limit — the gate above
-                    # and `critical_shed` do that.
-                    scaled = max(min(scaled, solar_avail + peak_remaining), min_a)
+                    # `max(remaining, min_a)`, and the gate guarantees
+                    # `remaining + peak_remaining >= min_a` here), so it is kept
+                    # as a guard on the budget plumbing, not as the mechanism
+                    # that enforces the demand limit — the gate above and
+                    # `critical_shed` do that.
+                    scaled = max(min(scaled, remaining + peak_remaining), min_a)
 
             # Grid reading frozen (stale source): never let a running appliance's
             # setpoint climb. The surplus add-back would otherwise feed a runaway
