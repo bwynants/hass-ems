@@ -205,6 +205,17 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
 
         @callback
         def _on_trigger_change(event) -> None:
+            # Shutdown tears the source integrations down one by one, and
+            # each teardown flips its entities to unavailable — which a
+            # template built on them may turn into a *valid-looking* value.
+            # That is a tariff "change" we must not act on: it is the house
+            # disappearing, not the tariff switching. Rendering it here would
+            # command an appliance a few ms before HA dies and leave it in
+            # that state for the whole restart (2026-10-27 19:42:44: Slimmelezer
+            # disconnect -> tariff read off-peak -> charger ON into the outage).
+            if self.hass.is_stopping:
+                _LOGGER.debug("Trigger entity changed during shutdown; ignored")
+                return
             _LOGGER.debug(
                 "Trigger entity %s changed (%s -> %s); requesting refresh",
                 event.data.get("entity_id"),
@@ -392,6 +403,16 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
         }
 
     async def _async_update_data(self):
+        # Never command anything while Home Assistant is going down. The
+        # sources are being torn down in arbitrary order, so any cycle run now
+        # sees a half-dead house: templates over unavailable entities collapse
+        # to defaults, and a decision made on them is written to the appliance
+        # and then frozen there for the whole restart. Hold the last data
+        # (the entities keep their values) and decide nothing.
+        if self.hass.is_stopping:
+            _LOGGER.debug("==== EMS cycle skipped: Home Assistant is stopping ====")
+            return self.data if self.data is not None else {}
+
         config = {**self.entry.data, **self.entry.options}
         appliances = get_appliances(self.entry)
         _LOGGER.debug(
