@@ -46,6 +46,10 @@ CONF_VOLTAGE = "voltage"
 # Electricity prices (€/kWh), used by the off_peak-mode breakeven decision.
 CONF_COST_PEAK = "cost_peak"
 CONF_COST_OFFPEAK = "cost_offpeak"
+CONF_GAIN_PEAK = "gain_peak"
+CONF_GAIN_OFFPEAK = "gain_offpeak"
+# Legacy single export price (pre-0.5). Still read as the fallback for both
+# gain_peak and gain_offpeak; the options flow retires it on the next save.
 CONF_GAIN_EXPORT = "gain_export"
 
 # Quarterly demand (capacity-tariff) feature

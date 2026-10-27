@@ -52,6 +52,8 @@ from .const import (
     DEFAULT_PEAK_CRITICAL_SAFETY,
     CONF_COST_PEAK,
     CONF_COST_OFFPEAK,
+    CONF_GAIN_PEAK,
+    CONF_GAIN_OFFPEAK,
     CONF_GAIN_EXPORT,
     CONF_DEBUG_LOG,
     DEFAULT_DEBUG_LOG,
@@ -100,16 +102,21 @@ def _prefill_marker(key, current, required=False, edit_default=None):
     return cls(key, default=current.get(key))
 
 
-def _suggest_marker(key, current, required=False):
+def _suggest_marker(key, current, required=False, legacy_key=None):
     """Bare on create; ``suggested_value=current[key]`` on edit.
 
     Used for optional entity selectors and optional numerics that must stay
-    clearable (suggested_value doesn't force a value back in).
+    clearable (suggested_value doesn't force a value back in). ``legacy_key``
+    names a retired key whose stored value seeds the suggestion when ``key``
+    itself is not set yet (one-time migration through the form).
     """
     cls = vol.Required if required else vol.Optional
     if current is None:
         return cls(key)
-    return cls(key, description={"suggested_value": current.get(key)})
+    value = current.get(key)
+    if value is None and legacy_key is not None:
+        value = current.get(legacy_key)
+    return cls(key, description={"suggested_value": value})
 
 
 def _default_marker(key, current, default, required=False):
@@ -144,7 +151,10 @@ def _global_schema(current: dict | None) -> vol.Schema:
         # Unset ⇒ the built-in defaults.
         _suggest_marker(CONF_COST_PEAK, current): SENSOR_ENTITY_SELECTOR,
         _suggest_marker(CONF_COST_OFFPEAK, current): SENSOR_ENTITY_SELECTOR,
-        _suggest_marker(CONF_GAIN_EXPORT, current): SENSOR_ENTITY_SELECTOR,
+        # Export compensation per tariff period; a pre-0.5 entry's single
+        # gain_export seeds both until the form is saved once.
+        _suggest_marker(CONF_GAIN_PEAK, current, legacy_key=CONF_GAIN_EXPORT): SENSOR_ENTITY_SELECTOR,
+        _suggest_marker(CONF_GAIN_OFFPEAK, current, legacy_key=CONF_GAIN_EXPORT): SENSOR_ENTITY_SELECTOR,
         # Opt-in per-cycle debug log to ems_debug.log (off by default).
         _default_marker(CONF_DEBUG_LOG, current, DEFAULT_DEBUG_LOG): bool,
     })
@@ -258,10 +268,14 @@ class SolarApplianceOptionsFlow(OptionsFlow):
                     CONF_VOLTAGE,
                     CONF_COST_PEAK,
                     CONF_COST_OFFPEAK,
-                    CONF_GAIN_EXPORT,
+                    CONF_GAIN_PEAK,
+                    CONF_GAIN_OFFPEAK,
                 ):
                     if key not in user_input:
                         self.data.pop(key, None)
+                # The per-period export prices now carry the value (seeded
+                # from it in the form), so the legacy single key is retired.
+                self.data.pop(CONF_GAIN_EXPORT, None)
                 self.hass.config_entries.async_update_entry(
                     self.config_entry, data=self.data
                 )

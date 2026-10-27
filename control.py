@@ -20,12 +20,12 @@ from .const import (
     CONF_HYSTERESIS_ON_OFF_SECONDS, CONF_AVERAGING_WINDOW,
     CONF_EV_SOC_SENSOR, CONF_FORCE_CHARGE_BELOW_SOC, DEFAULT_FORCE_CHARGE_BELOW_SOC,
     CONF_RUNTIME_MODE, CONF_RUNTIME_MODES,
-    CONF_COST_PEAK, CONF_COST_OFFPEAK, CONF_GAIN_EXPORT,
+    CONF_COST_PEAK, CONF_COST_OFFPEAK, CONF_GAIN_PEAK, CONF_GAIN_OFFPEAK, CONF_GAIN_EXPORT,
     DEFAULT_MIN_AMPS, DEFAULT_MAX_AMPS, DEFAULT_PRIORITY, DEFAULT_HYSTERESIS,
     DEFAULT_AVERAGING,
     DEFAULT_FIXED_AMPS_HYSTERESIS_SECONDS, DEFAULT_PARTIAL_MIN_EXCESS,
     DEFAULT_MODE,
-    DEFAULT_COST_PEAK, DEFAULT_COST_OFFPEAK, DEFAULT_GAIN_EXPORT,
+    DEFAULT_COST_PEAK, DEFAULT_COST_OFFPEAK, DEFAULT_GAIN_PEAK, DEFAULT_GAIN_OFFPEAK,
     FIXED_AMPS_STEP, MODE_UNMANAGED,
 )
 from .helpers import (
@@ -97,6 +97,9 @@ def build_energy_input(hass, config: dict, voltage: float) -> EnergyInput:
     is_peak = read_binary(
         hass, config.get(CONF_PEAK_TARIFF_SENSOR), missing=True, unavailable=True
     )
+    # Pre-0.5 entries hold one export price under gain_export; it backs both
+    # per-period prices until the options flow is saved with the new fields.
+    legacy_gain = config.get(CONF_GAIN_EXPORT)
     return EnergyInput(
         grid_w=read_sensor_optional(hass, config.get(CONF_GRID_EXPORT)),
         solar_w=read_sensor(hass, config.get(CONF_SOLAR_PRODUCTION)),
@@ -107,7 +110,8 @@ def build_energy_input(hass, config: dict, voltage: float) -> EnergyInput:
         # cycle, so dynamic tariffs work); legacy plain numbers still resolve.
         cost_peak=read_value(hass, config.get(CONF_COST_PEAK), DEFAULT_COST_PEAK),
         cost_offpeak=read_value(hass, config.get(CONF_COST_OFFPEAK), DEFAULT_COST_OFFPEAK),
-        gain_export=read_value(hass, config.get(CONF_GAIN_EXPORT), DEFAULT_GAIN_EXPORT),
+        gain_peak=read_value(hass, config.get(CONF_GAIN_PEAK) or legacy_gain, DEFAULT_GAIN_PEAK),
+        gain_offpeak=read_value(hass, config.get(CONF_GAIN_OFFPEAK) or legacy_gain, DEFAULT_GAIN_OFFPEAK),
     )
 
 

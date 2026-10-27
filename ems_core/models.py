@@ -101,7 +101,20 @@ class EnergyInput:
     off_peak: bool
     cost_peak: float
     cost_offpeak: float
-    gain_export: float
+    # Export compensation per tariff period (€/kWh). Most contracts pay the
+    # same in both, but dual-rate injection tariffs exist, so they are kept
+    # apart and the one for the CURRENT period is used (see ``gain_now``).
+    gain_peak: float
+    gain_offpeak: float
+
+    @property
+    def gain_now(self) -> float:
+        """Export compensation that applies in the current tariff period.
+
+        This is the income forgone by self-consuming a kWh of solar *now*, so
+        it is the opportunity-cost term of the off_peak-mode breakeven.
+        """
+        return self.gain_offpeak if self.off_peak else self.gain_peak
 
 
 @dataclass

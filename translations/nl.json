@@ -18,7 +18,8 @@
           "peak_critical_safety": "Kritieke veiligheidsmarge (kW)",
           "cost_peak": "Entiteit prijs afname piektarief (€/kWh)",
           "cost_offpeak": "Entiteit prijs afname daltarief (€/kWh)",
-          "gain_export": "Entiteit injectievergoeding (€/kWh)",
+          "gain_peak": "Entiteit injectievergoeding piektarief (€/kWh)",
+          "gain_offpeak": "Entiteit injectievergoeding daltarief (€/kWh)",
           "debug_log": "Volledige debuglog naar ems_debug.log schrijven"
         },
         "data_description": {
@@ -35,7 +36,8 @@
           "peak_critical_safety": "kW afgetrokken van de maandpiek voor de Kritieke limiet (bv. 0,2).",
           "cost_peak": "Sensor- of getalentiteit met de prijs per kWh afgenomen tijdens piekuren. Leeg laten voor de standaardwaarde (0,40 €/kWh).",
           "cost_offpeak": "Sensor- of getalentiteit met de prijs per kWh afgenomen tijdens daluren. Leeg laten voor de standaardwaarde (0,20 €/kWh).",
-          "gain_export": "Sensor- of getalentiteit met de vergoeding per geïnjecteerde kWh; leeg laten voor de standaardwaarde (0,10 €/kWh). Elke cyclus opnieuw gelezen, dus dynamische tarieven werken. Deze drie prijzen sturen de breakeven-beslissing van de off_peak-modus."
+          "gain_peak": "Sensor- of getalentiteit met de vergoeding per geïnjecteerde kWh tijdens piekuren; leeg laten voor de standaardwaarde (0,10 €/kWh). Elke cyclus opnieuw gelezen, dus dynamische tarieven werken. Samen met de twee afnameprijzen stuurt dit de breakeven-beslissing van de off_peak-modus.",
+          "gain_offpeak": "Sensor- of getalentiteit met de vergoeding per geïnjecteerde kWh tijdens daluren; leeg laten voor de standaardwaarde (0,10 €/kWh). Gebruik dezelfde entiteit als bij piek wanneer je contract één injectieprijs heeft."
         }
       }
     },
@@ -62,7 +64,8 @@
           "peak_critical_safety": "Kritieke veiligheidsmarge (kW)",
           "cost_peak": "Entiteit prijs afname piektarief (€/kWh)",
           "cost_offpeak": "Entiteit prijs afname daltarief (€/kWh)",
-          "gain_export": "Entiteit injectievergoeding (€/kWh)",
+          "gain_peak": "Entiteit injectievergoeding piektarief (€/kWh)",
+          "gain_offpeak": "Entiteit injectievergoeding daltarief (€/kWh)",
           "debug_log": "Volledige debuglog naar ems_debug.log schrijven"
         },
         "data_description": {
@@ -79,7 +82,8 @@
           "peak_critical_safety": "kW afgetrokken van de maandpiek voor de Kritieke limiet (bv. 0,2).",
           "cost_peak": "Sensor- of getalentiteit met de prijs per kWh afgenomen tijdens piekuren. Leeg laten voor de standaardwaarde (0,40 €/kWh).",
           "cost_offpeak": "Sensor- of getalentiteit met de prijs per kWh afgenomen tijdens daluren. Leeg laten voor de standaardwaarde (0,20 €/kWh).",
-          "gain_export": "Sensor- of getalentiteit met de vergoeding per geïnjecteerde kWh; leeg laten voor de standaardwaarde (0,10 €/kWh). Elke cyclus opnieuw gelezen, dus dynamische tarieven werken. Deze drie prijzen sturen de breakeven-beslissing van de off_peak-modus."
+          "gain_peak": "Sensor- of getalentiteit met de vergoeding per geïnjecteerde kWh tijdens piekuren; leeg laten voor de standaardwaarde (0,10 €/kWh). Elke cyclus opnieuw gelezen, dus dynamische tarieven werken. Samen met de twee afnameprijzen stuurt dit de breakeven-beslissing van de off_peak-modus.",
+          "gain_offpeak": "Sensor- of getalentiteit met de vergoeding per geïnjecteerde kWh tijdens daluren; leeg laten voor de standaardwaarde (0,10 €/kWh). Gebruik dezelfde entiteit als bij piek wanneer je contract één injectieprijs heeft."
         }
       }
     }

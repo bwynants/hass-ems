@@ -34,7 +34,7 @@ def _app(**kw):
 def _energy(**kw):
     base = dict(
         grid_w=None, solar_w=0.0, house_load_w=0.0, voltage=230, off_peak=False,
-        cost_peak=0.40, cost_offpeak=0.20, gain_export=0.10,
+        cost_peak=0.40, cost_offpeak=0.20, gain_peak=0.10, gain_offpeak=0.10,
     )
     base.update(kw)
     return EnergyInput(**base)
@@ -234,6 +234,29 @@ def test_off_peak_gated_by_breakeven_when_peak_dearer():
     res = optimize([app], states, excess_amps=-10.0, peak_amps=None,
                    energy=_energy(off_peak=False), now=T0)
     assert res.active == []
+
+
+def test_off_peak_breakeven_uses_peak_period_export_gain():
+    # Peak hours: the solar the appliance would self-consume is otherwise
+    # exported at the PEAK export price, so only gain_peak enters the gate.
+    # 6 A min + 0.5 A start margin = 6.5 A; breakeven = 6.5*(0.40-0.20)/(0.40-0.10)
+    # = 4.33 A. An off-peak export price near the peak import price would
+    # saturate the gate to +inf if it were (wrongly) used — it must not be.
+    app = _app(mode=MODE_OFF_PEAK, min_amps=6)
+    res = optimize([app], {}, excess_amps=5.0, peak_amps=None,
+                   energy=_energy(off_peak=False, gain_peak=0.10, gain_offpeak=0.39), now=T0)
+    assert res.active == ["a"]
+    # Conversely a dear peak export price gates it even though gain_offpeak is low.
+    res = optimize([app], {}, excess_amps=5.0, peak_amps=None,
+                   energy=_energy(off_peak=False, gain_peak=0.39, gain_offpeak=0.10), now=T0)
+    assert res.active == []
+
+
+def test_energy_input_gain_now_follows_tariff_period():
+    e = _energy(off_peak=False, gain_peak=0.06, gain_offpeak=0.04)
+    assert e.gain_now == 0.06
+    e = _energy(off_peak=True, gain_peak=0.06, gain_offpeak=0.04)
+    assert e.gain_now == 0.04
 
 
 def test_off_peak_runs_free_when_peak_cheaper_than_off_peak():

@@ -70,7 +70,8 @@ SOC_FULL_PERCENT = 95
 # breakeven gate always uses these unless a config override is supplied.
 DEFAULT_COST_PEAK = 0.40
 DEFAULT_COST_OFFPEAK = 0.20
-DEFAULT_GAIN_EXPORT = 0.10
+DEFAULT_GAIN_PEAK = 0.10
+DEFAULT_GAIN_OFFPEAK = 0.10
 
 # How long after startup the controller may wait for its source sensors before
 # it commands anything. Our config entry is set up before the inverter/meter

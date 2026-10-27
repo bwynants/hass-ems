@@ -49,6 +49,11 @@ def scaled_amps(min_a: float, max_a: float, remaining_amps: float) -> float:
 def breakeven(min_amps, cost_peak, cost_offpeak, gain_export):
     """Averaged excess (amps) above which running at peak beats waiting for off-peak.
 
+    ``gain_export`` is the export compensation that applies NOW (the solar the
+    appliance would self-consume is otherwise exported at that price), i.e.
+    ``EnergyInput.gain_now`` — the peak-period rate, since this gate only
+    runs during peak hours.
+
     Fails CLOSED on a degenerate or negative denominator (export gain at or
     above the peak cost): running at peak can then never beat waiting, so the
     threshold saturates to infinity instead of 0 ("always run").

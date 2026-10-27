@@ -189,8 +189,11 @@ def _basic_condition(
         _LOGGER.debug("%s mode=%s, avg_excess=%s, min_excess=%s", name, mode, avg_excess, partial_min_amps)
         return avg_excess >= partial_min_amps
     elif mode == MODE_OFF_PEAK:
-        be = breakeven(required_a, energy.cost_peak, energy.cost_offpeak, energy.gain_export)
-        _LOGGER.debug("%s mode=%s, avg_excess=%s, breakeven=%s", name, mode, avg_excess, be)
+        be = breakeven(required_a, energy.cost_peak, energy.cost_offpeak, energy.gain_now)
+        _LOGGER.debug(
+            "%s mode=%s, avg_excess=%s, breakeven=%s (peak=%.3f offpeak=%.3f gain_now=%.3f)",
+            name, mode, avg_excess, be, energy.cost_peak, energy.cost_offpeak, energy.gain_now,
+        )
         return avg_excess >= be
 
     return False
