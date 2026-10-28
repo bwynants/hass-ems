@@ -15,7 +15,7 @@ def _app(**kw):
     base = dict(
         name="a", priority=100, min_amps=6, max_amps=16, mode=MODE_PARTIAL_SOLAR,
         has_fixed_amps=False, fixed_amps_value=None, fixed_amps_hold_seconds=120,
-        partial_min_excess=1000, hysteresis_seconds=120, averaging_window_seconds=180,
+        partial_min_excess_amps=4.0, hysteresis_seconds=120, averaging_window_seconds=180,
         connected=True, entity_on=False, measured_amps=None,
     )
     base.update(kw)

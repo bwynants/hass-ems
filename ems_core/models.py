@@ -35,7 +35,8 @@ class ApplianceInput:
     has_fixed_amps: bool
     fixed_amps_value: float | None
     fixed_amps_hold_seconds: int
-    partial_min_excess: float
+    # partial_solar threshold in AMPS of averaged surplus (0 = no threshold).
+    partial_min_excess_amps: float
     hysteresis_seconds: int
     averaging_window_seconds: int
     connected: bool

@@ -12,7 +12,7 @@ import logging
 
 from .const import (
     MODE_FORCED, MODE_PARTIAL_SOLAR, MODE_FULL_SOLAR, MODE_OFF_PEAK, MODE_UNMANAGED,
-    DEFAULT_VOLTAGE, CONTROLLER_UPDATE_INTERVAL,
+    CONTROLLER_UPDATE_INTERVAL,
     FORCED_PEAK_HEADROOM_AMPS, SUNDOWN_SOLAR_W, ON_OFF_HYSTERESIS_AMPS,
     PEAK_GATE_SHED_CYCLES,
     NOT_CONSUMING_AMPS, NOT_CONSUMING_GRACE_SECONDS, SOC_FULL_PERCENT,
@@ -184,10 +184,21 @@ def _basic_condition(
 
     # Peak hours
     if mode == MODE_PARTIAL_SOLAR:
-        voltage = energy.voltage if energy.voltage > 0 else DEFAULT_VOLTAGE
-        partial_min_amps = app.partial_min_excess / voltage
-        _LOGGER.debug("%s mode=%s, avg_excess=%s, min_excess=%s", name, mode, avg_excess, partial_min_amps)
-        return avg_excess >= partial_min_amps
+        partial_min_amps = app.partial_min_excess_amps
+        # Same on/off deadband as the min-amps gate above: an OFF appliance
+        # starts only once the averaged excess clears the threshold by
+        # ON_OFF_HYSTERESIS_AMPS; once ON it holds down to the threshold
+        # itself. Without it an average hovering at the threshold flips the
+        # appliance every time the time hysteresis expires. A zero threshold
+        # means "no threshold" (run on any non-negative average, grid top-up
+        # bounded by the peak gate) and keeps its plain sign check.
+        on_margin = ON_OFF_HYSTERESIS_AMPS if partial_min_amps > 0 else 0.0
+        partial_required = partial_min_amps if state.is_on else partial_min_amps + on_margin
+        _LOGGER.debug(
+            "%s mode=%s, avg_excess=%s, min_excess=%s, required=%s",
+            name, mode, avg_excess, partial_min_amps, partial_required,
+        )
+        return avg_excess >= partial_required
     elif mode == MODE_OFF_PEAK:
         be = breakeven(required_a, energy.cost_peak, energy.cost_offpeak, energy.gain_now)
         _LOGGER.debug(

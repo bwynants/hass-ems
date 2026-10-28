@@ -26,8 +26,10 @@ DEFAULT_MAX_AMPS = 16
 DEFAULT_FIXED_AMPS_HYSTERESIS_SECONDS = 120
 DEFAULT_AVERAGING = 180
 DEFAULT_AUTO_SWITCHING = True
-# Minimum excess watts required to run in partial_solar mode (per appliance).
-DEFAULT_PARTIAL_MIN_EXCESS = 1000
+# Minimum averaged excess, in AMPS, required to run in partial_solar mode (per
+# appliance). Compared directly against the averaged surplus amps; the start
+# side carries ON_OFF_HYSTERESIS_AMPS on top.
+DEFAULT_PARTIAL_MIN_EXCESS_AMPS = 4.0
 
 # Extra grid (peak) headroom, in amps, that a forced appliance leaves unused
 # when scaling against the quarter-hour demand limit. Filling the headroom

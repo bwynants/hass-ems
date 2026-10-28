@@ -36,7 +36,7 @@ from .const import (
     CONF_FIXED_AMPS,
     CONF_FIXED_AMPS_HYSTERESIS_SECONDS,
     CONF_POWER_SENSOR,
-    CONF_PARTIAL_MIN_EXCESS,
+    CONF_PARTIAL_MIN_EXCESS_AMPS,
     CONF_CONNECTED_SENSOR,
     CONF_EV_SOC_SENSOR,
     CONF_HYSTERESIS_ON_OFF_SECONDS,
@@ -172,7 +172,7 @@ def _appliance_schema(current: dict | None) -> vol.Schema:
         _prefill_marker(CONF_FIXED_AMPS, current, required=True): NUMBER_ENTITY_SELECTOR,
         _default_marker(CONF_FIXED_AMPS_HYSTERESIS_SECONDS, current, DEFAULT_FIXED_AMPS_HYSTERESIS_SECONDS): vol.All(int, vol.Range(min=0)),
         _suggest_marker(CONF_POWER_SENSOR, current): SENSOR_ENTITY_SELECTOR,
-        _suggest_marker(CONF_PARTIAL_MIN_EXCESS, current): vol.All(int, vol.Range(0, 5000)),
+        _suggest_marker(CONF_PARTIAL_MIN_EXCESS_AMPS, current): vol.All(vol.Coerce(float), vol.Range(min=0)),
         _suggest_marker(CONF_CONNECTED_SENSOR, current): BINARY_SENSOR_ENTITY_SELECTOR,
         # EV charger: the car's SoC sensor (%). Optional and clearable; setting
         # it is what turns on the force-charge-below-SoC feature (the threshold
@@ -370,7 +370,7 @@ class OptionsFlowHandler(ConfigSubentryFlow):
             # clears them. Drop any that were left empty so they can be removed.
             for key in (
                 CONF_POWER_SENSOR,
-                CONF_PARTIAL_MIN_EXCESS,
+                CONF_PARTIAL_MIN_EXCESS_AMPS,
                 CONF_CONNECTED_SENSOR,
                 CONF_EV_SOC_SENSOR,
             ):

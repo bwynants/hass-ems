@@ -78,7 +78,7 @@ CONF_MAX_AMPS = "max_amps"
 CONF_FIXED_AMPS = "fixed_amps"
 CONF_FIXED_AMPS_HYSTERESIS_SECONDS = "fixed_amps_hysteresis_seconds"
 CONF_POWER_SENSOR = "power_sensor"
-CONF_PARTIAL_MIN_EXCESS = "partial_min_excess"
+CONF_PARTIAL_MIN_EXCESS_AMPS = "partial_min_excess_amps"
 CONF_CONNECTED_SENSOR = "connected_sensor"
 # EV charger: the car's state-of-charge sensor (%). Its presence is what makes
 # an appliance an EV charger. Deliberately NOT the battery-era

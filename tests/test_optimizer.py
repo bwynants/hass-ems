@@ -23,7 +23,7 @@ def _app(**kw):
     base = dict(
         name="a", priority=100, min_amps=6, max_amps=16, mode=MODE_PARTIAL_SOLAR,
         has_fixed_amps=False, fixed_amps_value=None, fixed_amps_hold_seconds=120,
-        partial_min_excess=1000, hysteresis_seconds=120, averaging_window_seconds=180,
+        partial_min_excess_amps=4.0, hysteresis_seconds=120, averaging_window_seconds=180,
         connected=True, entity_on=False, measured_amps=None,
     )
     base.update(kw)
@@ -57,7 +57,7 @@ def test_solar_funded_draw_not_capped_by_peak_headroom():
     # ceiling is a GRID-import allowance, so surplus-funded draw must scale past
     # it (the meter reads export — nothing is being imported to limit).
     app = _app(mode=MODE_PARTIAL_SOLAR, has_fixed_amps=True, fixed_amps_value=6,
-               min_amps=6, max_amps=32, partial_min_excess=0)
+               min_amps=6, max_amps=32, partial_min_excess_amps=0)
     states = {}
     res = optimize([app], states, excess_amps=16.0, peak_amps=8.0,
                    energy=_energy(), now=T0)
@@ -70,7 +70,7 @@ def test_solar_funded_draw_not_capped_by_peak_headroom():
 def test_solar_mode_runs_when_grid_headroom_below_min():
     # Headroom 3 A < min 6 A, but 16 A of surplus covers the appliance outright.
     # Pre-fix this was switched off on the headroom alone.
-    app = _app(mode=MODE_PARTIAL_SOLAR, min_amps=6, partial_min_excess=0)
+    app = _app(mode=MODE_PARTIAL_SOLAR, min_amps=6, partial_min_excess_amps=0)
     states = {}
     res = optimize([app], states, excess_amps=16.0, peak_amps=3.0,
                    energy=_energy(), now=T0)
@@ -80,7 +80,7 @@ def test_solar_mode_runs_when_grid_headroom_below_min():
 def test_peak_headroom_sheds_when_below_min():
     # No surplus, so the whole draw would come off the grid: headroom 3 A <
     # min 6 A => the appliance cannot run.
-    app = _app(mode=MODE_PARTIAL_SOLAR, min_amps=6, partial_min_excess=0)
+    app = _app(mode=MODE_PARTIAL_SOLAR, min_amps=6, partial_min_excess_amps=0)
     states = {}
     res = optimize([app], states, excess_amps=0.0, peak_amps=3.0,
                    energy=_energy(), now=T0)
@@ -91,7 +91,7 @@ def test_min_amps_floor_grid_topup_bounded_by_headroom():
     # Surplus (0.2 A) below min_amps: `scaled_amps` floors the setpoint at min,
     # so the appliance really does import the 5.8 A difference. The gate bounds
     # exactly that top-up — solar 0.2 + headroom 5.9 = 6.1 >= min 6, so it runs.
-    app = _app(mode=MODE_PARTIAL_SOLAR, min_amps=6, partial_min_excess=0)
+    app = _app(mode=MODE_PARTIAL_SOLAR, min_amps=6, partial_min_excess_amps=0)
     res = optimize([app], {}, excess_amps=0.2, peak_amps=5.9,
                    energy=_energy(), now=T0)
     assert res.active == ["a"]
@@ -105,8 +105,8 @@ def test_min_amps_floor_grid_topup_bounded_by_headroom():
 def test_priority_order_high_priority_claims_headroom_first():
     # No solar (excess 0) so the winner consumes GRID headroom; headroom only
     # covers one appliance at min (6A) — the lower priority number wins.
-    a1 = _app(name="hi", priority=1, min_amps=6, mode=MODE_PARTIAL_SOLAR, partial_min_excess=0)
-    a2 = _app(name="lo", priority=50, min_amps=6, mode=MODE_PARTIAL_SOLAR, partial_min_excess=0)
+    a1 = _app(name="hi", priority=1, min_amps=6, mode=MODE_PARTIAL_SOLAR, partial_min_excess_amps=0)
+    a2 = _app(name="lo", priority=50, min_amps=6, mode=MODE_PARTIAL_SOLAR, partial_min_excess_amps=0)
     states = {}
     res = optimize([a2, a1], states, excess_amps=0.0, peak_amps=6.0,
                    energy=_energy(), now=T0)
@@ -114,7 +114,7 @@ def test_priority_order_high_priority_claims_headroom_first():
 
 
 def test_full_solar_off_when_not_covered():
-    app = _app(mode=MODE_FULL_SOLAR, min_amps=6, partial_min_excess=0)
+    app = _app(mode=MODE_FULL_SOLAR, min_amps=6, partial_min_excess_amps=0)
     states = {}
     res = optimize([app], states, excess_amps=3.0, peak_amps=None,
                    energy=_energy(), now=T0)
@@ -451,7 +451,7 @@ def test_on_off_hysteresis_holds_recent_state():
 def test_start_needs_min_amps_plus_on_off_margin():
     # On/off deadband: an OFF appliance starts only once min_amps + 0.5 A is
     # available (partial threshold out of reach, so only the min-amps gate decides).
-    app = _app(mode=MODE_PARTIAL_SOLAR, min_amps=6, partial_min_excess=100_000)
+    app = _app(mode=MODE_PARTIAL_SOLAR, min_amps=6, partial_min_excess_amps=100_000)
     states = {}
     res = optimize([app], states, excess_amps=6.3, peak_amps=None,
                    energy=_energy(), now=T0)
@@ -464,7 +464,7 @@ def test_start_needs_min_amps_plus_on_off_margin():
 def test_running_appliance_stays_on_down_to_min_amps():
     # ...but once ON it holds down to min_amps itself, even after the time
     # hysteresis window has expired — the 0.5 A gap is the hysteresis.
-    app = _app(mode=MODE_PARTIAL_SOLAR, min_amps=6, partial_min_excess=100_000,
+    app = _app(mode=MODE_PARTIAL_SOLAR, min_amps=6, partial_min_excess_amps=100_000,
                hysteresis_seconds=0)
     states = {}
     optimize([app], states, excess_amps=8.0, peak_amps=None, energy=_energy(), now=T0)
@@ -480,7 +480,7 @@ def test_running_appliance_stays_on_down_to_min_amps():
 def test_on_off_margin_is_independent_of_the_setpoint_step():
     # A 0.1 A charger tracks its setpoint in 0.1 A steps, but the start margin
     # is still the fixed 0.5 A, not half its step.
-    app = _app(mode=MODE_PARTIAL_SOLAR, min_amps=6, partial_min_excess=100_000,
+    app = _app(mode=MODE_PARTIAL_SOLAR, min_amps=6, partial_min_excess_amps=100_000,
                has_fixed_amps=True, fixed_amps_value=6, fixed_amps_step=0.1)
     states = {}
     res = optimize([app], states, excess_amps=6.4, peak_amps=None,
@@ -711,7 +711,7 @@ def test_critical_shed_throttles_then_off():
 
 def test_seeded_running_appliance_survives_a_bad_first_budget():
     app = _app(mode=MODE_PARTIAL_SOLAR, entity_on=True, hysteresis_seconds=120,
-               partial_min_excess=1000)
+               partial_min_excess_amps=4.0)
     states = {"a": ApplianceState(is_on=True, last_change=T0)}
     res = optimize([app], states, excess_amps=0.0, peak_amps=None,
                    energy=_energy(), now=T0 + timedelta(seconds=10))
@@ -721,7 +721,7 @@ def test_seeded_running_appliance_survives_a_bad_first_budget():
 
 def test_seeded_running_appliance_still_switches_off_after_the_window():
     app = _app(mode=MODE_PARTIAL_SOLAR, entity_on=True, hysteresis_seconds=120,
-               partial_min_excess=1000)
+               partial_min_excess_amps=4.0)
     states = {"a": ApplianceState(is_on=True, last_change=T0)}
     res = optimize([app], states, excess_amps=0.0, peak_amps=None,
                    energy=_energy(), now=T0 + timedelta(seconds=121))
@@ -735,7 +735,7 @@ def test_unseeded_running_appliance_is_dropped_immediately():
     # appliance off with nothing to damp it — and the recovery back on is
     # equally undamped. Hence the shell must seed before its first cycle.
     app = _app(mode=MODE_PARTIAL_SOLAR, entity_on=True, hysteresis_seconds=120,
-               partial_min_excess=1000)
+               partial_min_excess_amps=4.0)
     states = {}
     res = optimize([app], states, excess_amps=0.0, peak_amps=None,
                    energy=_energy(), now=T0)
@@ -841,7 +841,7 @@ def test_force_charge_uses_additive_budget():
     # Without the override the same surplus scales on solar only: 4 A < 6 A min
     # -> floors at min_amps.
     plain = _app(mode=MODE_PARTIAL_SOLAR, has_fixed_amps=True, fixed_amps_value=6,
-                 max_amps=16, partial_min_excess=0)
+                 max_amps=16, partial_min_excess_amps=0)
     res2 = optimize([plain], {}, excess_amps=4.0, peak_amps=16.0,
                     energy=_energy(), now=T0)
     assert res2.fixed_amps_commands[0].value == 6.0
@@ -1042,3 +1042,27 @@ def test_not_consuming_pure_helper():
     assert not_consuming(_idle(), st, active=True, now=T0 + GRACE) is True
     assert not_consuming(_idle(), st, active=False, now=T0 + GRACE) is False
     assert st.not_consuming_since is None
+
+
+def test_partial_threshold_has_on_off_deadband():
+    # partial_solar threshold gate carries the same 0.5 A deadband as the
+    # min-amps gate: start only once the averaged excess clears the threshold
+    # by ON_OFF_HYSTERESIS_AMPS, stay on down to the threshold itself.
+    # Threshold 3 A. One-sample averaging and no time hysteresis so only the
+    # amps gate decides; excess stays under min_amps so the instantaneous
+    # min-amps gate never short-circuits the decision.
+    app = _app(mode=MODE_PARTIAL_SOLAR, min_amps=6, partial_min_excess_amps=3.0,
+               hysteresis_seconds=0, averaging_window_seconds=10)
+    states = {}
+    res = optimize([app], states, excess_amps=3.4, peak_amps=None,
+                   energy=_energy(), now=T0)
+    assert res.active == []
+    res = optimize([app], states, excess_amps=3.5, peak_amps=None,
+                   energy=_energy(), now=T0 + timedelta(seconds=10))
+    assert res.active == ["a"]
+    res = optimize([app], states, excess_amps=3.1, peak_amps=None,
+                   energy=_energy(), now=T0 + timedelta(seconds=20))
+    assert res.active == ["a"]
+    res = optimize([app], states, excess_amps=2.9, peak_amps=None,
+                   energy=_energy(), now=T0 + timedelta(seconds=30))
+    assert res.active == []
