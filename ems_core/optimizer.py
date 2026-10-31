@@ -82,14 +82,24 @@ def not_consuming(app: ApplianceInput, state: ApplianceState, active: bool, now)
 
     Only judged for appliances with a power sensor that are active this cycle;
     a start-up delay is covered by the grace period, a power-sensor dropout
-    (``measured_amps`` None) is never a fault, and a car at or above
-    SOC_FULL_PERCENT tapering off is normal. Anything else resets the timer.
-    Mutates ``state.not_consuming_since``.
+    (``measured_amps`` None, or a reading the shell is holding from before the
+    dropout — ``measured_live`` False) is never a fault, nor is a controlled
+    entity that is unavailable (EMS cannot have switched it on), and a car at
+    or above SOC_FULL_PERCENT tapering off is normal. Anything else resets the
+    timer. Mutates ``state.not_consuming_since``.
+
+    The held-reading and unavailable-entity cases are what a charger that
+    drops off the network looks like: the shell keeps its last 0 A reading,
+    off-peak starts, EMS "activates" it — and without these guards the flag
+    came on 5 minutes later and announced a charging failure for a link
+    outage (2026-10-29).
     """
     if (
         not active
         or not app.has_power_sensor
         or app.measured_amps is None
+        or not app.measured_live
+        or not app.entity_available
         or app.measured_amps >= NOT_CONSUMING_AMPS
         or (app.soc is not None and app.soc >= SOC_FULL_PERCENT)
     ):

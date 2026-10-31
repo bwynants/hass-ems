@@ -72,6 +72,19 @@ def _is_on(hass, entity_id: str | None, assumed_on: bool) -> bool:
     return read_binary(hass, entity_id, missing=False, unavailable=assumed_on)
 
 
+def _entity_available(hass, entity_id: str | None) -> bool:
+    """Whether the controlled entity exists and is not unavailable/unknown.
+
+    Separate from ``_is_on``: that one deliberately falls back to our own last
+    decision during a dropout, which is right for the budget but must not
+    make an unreachable charger look like one that is on and not charging.
+    """
+    if not entity_id:
+        return False
+    state = hass.states.get(entity_id)
+    return state is not None and state.state not in UNAVAILABLE_STATES
+
+
 def _is_connected(hass, entity_id: str | None) -> bool:
     """Connected unless the sensor explicitly reports off.
 
@@ -152,6 +165,9 @@ def build_appliance_inputs(hass, appliances, coordinator, voltage: float):
         power_entity = app.get(CONF_POWER_SENSOR)
         has_power_sensor = bool(power_entity)
         measured = _measured_amps(hass, power_entity, voltage)
+        # The core must be able to tell a live reading from a held one: a held
+        # 0 A during a charger outage is not "switched on but not consuming".
+        measured_live = measured is not None
         if has_power_sensor and runtime is not None:
             if measured is not None:
                 runtime.last_measured_amps = measured
@@ -193,7 +209,9 @@ def build_appliance_inputs(hass, appliances, coordinator, voltage: float):
                 averaging_window_seconds=app.get(CONF_AVERAGING_WINDOW, DEFAULT_AVERAGING),
                 connected=connected,
                 entity_on=_is_on(hass, app.get(CONF_ENTITY_ID), assumed_on),
+                entity_available=_entity_available(hass, app.get(CONF_ENTITY_ID)),
                 measured_amps=measured,
+                measured_live=measured_live,
                 has_power_sensor=has_power_sensor,
                 soc=soc,
                 force_charge_below_soc=_resolve_force_charge_below_soc(coordinator, app),

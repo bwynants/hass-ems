@@ -46,6 +46,15 @@ class ApplianceInput:
     # ``measured_amps`` is None (sensor unavailable), the surplus add-back must
     # NOT fall back to the fixed_amps setpoint — see energy.actual_amps.
     has_power_sensor: bool = False
+    # False when ``measured_amps`` is a reading HELD from an earlier cycle
+    # because the power sensor is currently unavailable. The hold keeps the
+    # surplus add-back sane, but a held 0 A says nothing about the appliance
+    # right now — so it must never count as "switched on but not consuming".
+    measured_live: bool = True
+    # False when the controlled entity (switch) itself is unavailable this
+    # cycle: EMS may still *want* it on, but cannot command it, so a zero draw
+    # is a link problem, not an appliance fault.
+    entity_available: bool = True
     # Granularity of this appliance's setpoint, taken from the "ampere to use"
     # entity's own ``step``. The default only applies when that entity doesn't
     # publish one.

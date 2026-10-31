@@ -1018,6 +1018,34 @@ def test_not_consuming_requires_power_sensor_and_reading():
     assert r2.not_consuming == []
 
 
+def test_not_consuming_ignores_held_reading_during_power_dropout():
+    # The shell holds the last reading (0 A) while the power sensor is
+    # unavailable and marks it measured_live=False. That is a link outage,
+    # not a charging failure: never flagged, and the timer is cleared.
+    states = {}
+    _cycles([(0, _idle())], states)                              # live 0 A: timer starts
+    held = _idle(measured_amps=0.0, measured_live=False)
+    r = _cycles([(NOT_CONSUMING_GRACE_SECONDS * 3, held)], states)
+    assert r.active == ["a"] and r.not_consuming == []
+    assert states["a"].not_consuming_since is None
+    # Once the reading is live again the grace period starts over.
+    r = _cycles([(NOT_CONSUMING_GRACE_SECONDS * 3 + 10, _idle())], states)
+    assert r.not_consuming == []
+    r = _cycles([(NOT_CONSUMING_GRACE_SECONDS * 4 + 10, _idle())], states)
+    assert r.not_consuming == ["a"]
+
+
+def test_not_consuming_ignores_unavailable_controlled_entity():
+    # The switch itself is unavailable: EMS cannot have switched it on, so a
+    # zero draw proves nothing. Never flagged, timer cleared.
+    states = {}
+    gone = _idle(entity_available=False)
+    _cycles([(0, gone)], states)
+    r = _cycles([(NOT_CONSUMING_GRACE_SECONDS * 2, gone)], states)
+    assert r.active == ["a"] and r.not_consuming == []
+    assert states["a"].not_consuming_since is None
+
+
 def test_not_consuming_only_when_ems_switched_it_on():
     # partial_solar with no surplus: EMS keeps it OFF, so zero draw is expected.
     states = {}
