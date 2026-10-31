@@ -30,6 +30,9 @@ from .energy import (
 )
 from .fixed_amps import step_target, decide
 from .demand import compute_demand
+from .demand_alerts import (
+    ALERT_TYPES, DemandAlertState, step_alerts, resolve_quarter, is_new_month_peak,
+)
 from .optimizer import (
     optimize, critical_shed, record_excess, force_charge_active, effective_mode,
     not_consuming,
@@ -53,6 +56,11 @@ __all__ = [
     "step_target",
     "decide",
     "compute_demand",
+    "ALERT_TYPES",
+    "DemandAlertState",
+    "step_alerts",
+    "resolve_quarter",
+    "is_new_month_peak",
     "optimize",
     "critical_shed",
     "record_excess",

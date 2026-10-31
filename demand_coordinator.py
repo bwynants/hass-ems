@@ -18,6 +18,7 @@ from homeassistant.util import dt as dt_util
 
 from .helpers import read_kw
 from .ems_core.demand import compute_demand
+from .ems_core.demand_alerts import DemandAlertState, resolve_quarter, step_alerts
 from .const import (
     DOMAIN,
     CONF_DEMAND_POWER_CURRENT_PEAK_SENSOR,
@@ -31,6 +32,7 @@ from .const import (
     DEFAULT_PEAK_CRITICAL_SAFETY,
     DEMAND_UPDATE_INTERVAL_SECONDS,
     DEMAND_STALE_SECONDS,
+    DEMAND_QUARTER_SECONDS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -61,6 +63,13 @@ class QuarterlyDemandCoordinator(DataUpdateCoordinator):
         # Armed at each quarter boundary; the "previous month max" baseline is
         # snapshotted once, ~1 min into the quarter (see the persist block).
         self._quarter_snapshot_armed = False
+        # Once-per-quarter announcement policy (ems_core.demand_alerts). The
+        # per-quarter flags are persisted with the month max so an EMS reload
+        # mid-quarter doesn't repeat a warning. Emitted alerts are published in
+        # ``data["alerts"]`` with a monotonically increasing ``seq`` the event
+        # entity uses to fire each one exactly once.
+        self._alert_state = DemandAlertState()
+        self._alert_seq = 0
         # Last known good readings, held when a source sensor is momentarily
         # unavailable: a dropout must not zero the estimate (which would
         # release the Critical latch mid-peak) or collapse the month max to
@@ -93,6 +102,7 @@ class QuarterlyDemandCoordinator(DataUpdateCoordinator):
 
         self._month_max_value = _f(data.get("month_max_value"))
         self._previous_month_max = _f(data.get("previous_month_max"))
+        self._alert_state = DemandAlertState.from_dict(data.get("alert_state"))
 
     @property
     def feature_active(self) -> bool:
@@ -123,7 +133,14 @@ class QuarterlyDemandCoordinator(DataUpdateCoordinator):
             "high": False,
             "critical": False,
             "previous_month_max": None,
+            "alerts": [],
         }
+
+    def _emit_alert(self, alerts: list[dict], alert_type: str, **attrs) -> None:
+        """Append one alert to this cycle's list and log it."""
+        self._alert_seq += 1
+        alerts.append({"seq": self._alert_seq, "type": alert_type, **attrs})
+        _LOGGER.info("demand alert: %s %s", alert_type, attrs)
 
     async def _async_update_data(self) -> dict:
         config = {**self.entry.data, **self.entry.options}
@@ -218,6 +235,22 @@ class QuarterlyDemandCoordinator(DataUpdateCoordinator):
         self._high_on = r.high
         self._critical_on = r.critical
 
+        # Threshold alerts: at most one High and one Critical per quarter. The
+        # quarter id is wall-clock based (epoch // 900 lines up with :00/:15/
+        # :30/:45 for whole-quarter UTC offsets), so a restart lands in the
+        # same quarter the persisted flags belong to.
+        alerts: list[dict] = []
+        quarter_id = int(now.timestamp() // DEMAND_QUARTER_SECONDS)
+        alert_state, alert_types = step_alerts(
+            self._alert_state, quarter_id=quarter_id, high=high, critical=critical,
+        )
+        for alert_type in alert_types:
+            self._emit_alert(
+                alerts, alert_type,
+                month_max=round(month_max, 2), estimate=round(estimate, 2),
+                previous_peak=None, new_peak=None,
+            )
+
         # Persist the month-max (used as the source fallback above, so it
         # survives a restart / startup dropout) and snapshot the "previous
         # month max" baseline. Only once the source has actually reported this
@@ -239,14 +272,38 @@ class QuarterlyDemandCoordinator(DataUpdateCoordinator):
                 self._quarter_snapshot_armed = True
             elif self._quarter_snapshot_armed:
                 self._quarter_snapshot_armed = False
+                # The snapshot moment is also when the PREVIOUS quarter's
+                # verdict is definitive: month_max now vs. the baseline taken
+                # at its start says whether it set a record ("new monthly
+                # peak") or merely scared us ("cleared"). Resolve before the
+                # baseline moves on.
+                alert_state, verdict_types = resolve_quarter(
+                    alert_state, old_peak=self._previous_month_max, new_peak=month_max,
+                )
+                for alert_type in verdict_types:
+                    self._emit_alert(
+                        alerts, alert_type,
+                        month_max=round(month_max, 2), estimate=round(estimate, 2),
+                        previous_peak=(round(self._previous_month_max, 2)
+                                       if self._previous_month_max is not None else None),
+                        new_peak=round(month_max, 2),
+                    )
                 if (self._previous_month_max is None
                         or round(self._previous_month_max, 2) != round(month_max, 2)):
                     self._previous_month_max = month_max
                     dirty = True
 
+        if alert_state != self._alert_state:
+            self._alert_state = alert_state
+            dirty = True
+
         if dirty:
             await self._store.async_save(
-                {"month_max_value": self._month_max_value, "previous_month_max": self._previous_month_max}
+                {
+                    "month_max_value": self._month_max_value,
+                    "previous_month_max": self._previous_month_max,
+                    "alert_state": self._alert_state.as_dict(),
+                }
             )
 
         _LOGGER.debug(
@@ -267,4 +324,5 @@ class QuarterlyDemandCoordinator(DataUpdateCoordinator):
             "high": high,
             "critical": critical,
             "previous_month_max": round(self._previous_month_max, 2) if self._previous_month_max is not None else None,
+            "alerts": alerts,
         }

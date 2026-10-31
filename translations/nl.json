@@ -221,6 +221,21 @@
         "name": "Verbruikt niet"
       }
     },
+    "event": {
+      "quarterly_demand_alert": {
+        "name": "Piekwaarschuwing kwartiervermogen",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "high": "Hoog",
+              "critical": "Kritiek",
+              "cleared": "Risico geweken",
+              "new_month_peak": "Nieuwe maandpiek"
+            }
+          }
+        }
+      }
+    },
     "switch": {
       "auto_switching": {
         "name": "Automatisch schakelen"

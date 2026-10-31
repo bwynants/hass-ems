@@ -145,6 +145,7 @@ When the quarterly-demand sources are configured, these EMS-wide entities are al
 | `Max Power To Peak Limit` | Sensor | Additional power that can be drawn now without exceeding the High limit *by the end of the current quarter* (cap 40 kW). Monitoring only — the optimizer scales against the fixed High limit instead, to stay boundary-stable |
 | `Quarterly Demand High` | Binary | Estimate ≥ High limit (after 6 min, 0.2 kW hysteresis) |
 | `Quarterly Demand Critical` | Binary | Estimate ≥ Critical limit (after 8 min, 0.2 kW hysteresis) |
+| `Quarterly Demand Alert` | Event | Once-per-quarter peak announcements: `high` (first time High latches while Critical is off), `critical` (first time Critical latches; a later High stays silent), and after the quarter has ended, ~1 min into the next one when the month-max source is definitive, either `new_month_peak` (the month maximum rose, with `previous_peak`/`new_peak` attributes) or `cleared` (a warning went out but no record was set). Never more than one High, one Critical and one closing message per quarter hour; a High that drops and comes back does not repeat. Every event carries `month_max` and `estimate`. Trigger on it with `event.received` and filter on `event_type`; the per-quarter flags are persisted, so an EMS reload mid-quarter does not re-announce |
 
 ---
 

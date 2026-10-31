@@ -221,6 +221,21 @@
         "name": "Not consuming"
       }
     },
+    "event": {
+      "quarterly_demand_alert": {
+        "name": "Quarterly Demand Alert",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "high": "High",
+              "critical": "Critical",
+              "cleared": "Cleared",
+              "new_month_peak": "New monthly peak"
+            }
+          }
+        }
+      }
+    },
     "switch": {
       "auto_switching": {
         "name": "Auto switching"

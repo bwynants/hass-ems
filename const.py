@@ -21,6 +21,7 @@ SUBENTRY_TYPE_APPLIANCE = "appliance"
 
 PLATFORMS = [
     Platform.SWITCH, Platform.SENSOR, Platform.SELECT, Platform.BINARY_SENSOR, Platform.NUMBER,
+    Platform.EVENT,
 ]
 
 
