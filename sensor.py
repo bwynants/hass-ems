@@ -80,6 +80,8 @@ class SolarApplianceStatusSensor(EMSEntity, SensorEntity):
             "forced_appliances": data.get("forced_appliances", []),
             # Switched on by EMS but not drawing anything (see binary sensors).
             "not_consuming_appliances": data.get("not_consuming_appliances", []),
+            # Throttled, cut or shed for the quarter-hour peak this cycle.
+            "peak_limited_appliances": data.get("peak_limited_appliances", []),
             "auto_switching": data.get("auto_switching"),
             "demand_high": demand.get("high"),
             "demand_critical": demand.get("critical"),

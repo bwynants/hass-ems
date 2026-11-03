@@ -60,6 +60,7 @@ CONF_DEMAND_MONTH_MAX_SENSOR = "demand_month_max_sensor"
 CONF_MINIMAL_PEAK_WARNING = "minimal_peak_warning"
 CONF_PEAK_HIGH_SAFETY = "peak_high_safety"
 CONF_PEAK_CRITICAL_SAFETY = "peak_critical_safety"
+CONF_PEAK_SHED_SAFETY = "peak_shed_safety"
 
 CONF_RUNTIME_MODES = "runtime_modes"
 CONF_RUNTIME_MODE = "runtime_mode"

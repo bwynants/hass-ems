@@ -15,6 +15,7 @@ from .const import (
     CONF_SOLAR_PRODUCTION, CONF_HOUSE_LOAD,
     CONF_ENTITY_ID, CONF_POWER_SENSOR, CONF_FIXED_AMPS, CONF_CONNECTED_SENSOR,
     CONF_DEMAND_POWER_CONSUMED_SENSOR, MODE_UNMANAGED, STARTUP_GRACE_SECONDS,
+    CONF_PEAK_SHED_SAFETY, DEFAULT_PEAK_SHED_SAFETY, PEAK_ACTION_HOLD_SECONDS,
 )
 from .helpers import read_sensor, sensors_stale, not_ready_entities
 from . import control
@@ -51,6 +52,13 @@ def _parse_dt(value):
 def _parse_float(value):
     try:
         return float(value) if value is not None else None
+    except (ValueError, TypeError):
+        return None
+
+
+def _parse_int(value):
+    try:
+        return int(value) if value is not None else None
     except (ValueError, TypeError):
         return None
 
@@ -113,6 +121,7 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
                 last_change=_parse_dt(raw.get("last_change")),
                 last_fixed_amps=_parse_float(raw.get("last_fixed_amps")),
                 last_fixed_amps_change=_parse_dt(raw.get("last_fixed_amps_change")),
+                peak_shed_quarter=_parse_int(raw.get("peak_shed_quarter")),
             )
         self._persisted_snapshot = self._state_snapshot()
         _LOGGER.debug(
@@ -136,6 +145,10 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
                         st.last_fixed_amps_change.isoformat()
                         if st.last_fixed_amps_change else None
                     ),
+                    # The per-quarter shed lockout must survive a reload
+                    # mid-quarter, or the reload restarts the appliance into
+                    # the same tight projection.
+                    "peak_shed_quarter": st.peak_shed_quarter,
                 }
                 for uid, st in self.appliance_states.items()
             }
@@ -328,6 +341,39 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
             return None
         return kw * 1000.0 / voltage
 
+    def _demand_snapshot(self, config: dict):
+        """The quarter the optimizer projects against, or None.
+
+        None until the demand feature is active and has published the
+        quarter fields; the optimizer then falls back to the instantaneous
+        ceiling alone (pre-0.7 behaviour).
+        """
+        demand = self._demand_data()
+        if not demand:
+            return None
+        try:
+            return ems_core.DemandSnapshot(
+                quarter_id=int(demand["quarter_id"]),
+                so_far_kw=float(demand["so_far"]),
+                seconds_remaining=int(demand["seconds_remaining"]),
+                high_limit_kw=float(demand["high_limit"]),
+                shed_margin_kw=float(
+                    config.get(CONF_PEAK_SHED_SAFETY, DEFAULT_PEAK_SHED_SAFETY)
+                ),
+            )
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    def _note_peak_action(self, now) -> None:
+        """Tell the demand coordinator the controller is acting for peak.
+
+        It holds the High/Critical announcement for PEAK_ACTION_HOLD_SECONDS
+        after the last action, and warns only if the risk outlives the shed.
+        """
+        dc = self.demand_coordinator
+        if dc is not None:
+            dc.peak_action_until = now + timedelta(seconds=PEAK_ACTION_HOLD_SECONDS)
+
     # ---- Startup warm-up ------------------------------------------------------
 
     def _source_entities(self, config: dict, inputs, raw_by_uid) -> list:
@@ -482,10 +528,13 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
         demand = self._demand_data()
         if demand:
             _LOGGER.debug(
-                "demand: estimate=%s kW high_limit=%s crit_limit=%s high=%s critical=%s max_to_peak=%s kW",
+                "demand: estimate=%s kW high_limit=%s crit_limit=%s high=%s critical=%s "
+                "max_to_peak=%s kW so_far=%s kW remaining=%s s",
                 demand.get("estimate"), demand.get("high_limit"), demand.get("critical_limit"),
                 demand.get("high"), demand.get("critical"), demand.get("max_power_to_peak"),
+                demand.get("so_far"), demand.get("seconds_remaining"),
             )
+        demand_snapshot = self._demand_snapshot(config)
 
         # Total surplus = grid surplus + managed draw added back (gross surplus).
         grid_surplus = ems_core.calculate_excess_amps(
@@ -508,11 +557,15 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
                 _LOGGER.warning(
                     "demand CRITICAL -> throttling managed appliances to min, then shedding"
                 )
-                shed = ems_core.critical_shed(inputs, self.appliance_states, now)
+                shed = ems_core.critical_shed(
+                    inputs, self.appliance_states, now,
+                    quarter_id=demand_snapshot.quarter_id if demand_snapshot else None,
+                )
                 await control.apply_commands(
                     self.hass, shed.kept, shed.fixed_amps_commands, inputs, raw_by_uid
                 )
                 kept, kept_amps = shed.kept, shed.kept_amps
+                self._note_peak_action(now)
             else:
                 # Not intervening: nothing is "kept at min", but the appliances
                 # are still drawing — report the real managed draw, not 0.
@@ -534,6 +587,7 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
                 "appliances": appliances,
                 "auto_switching": self.enabled,
                 "demand_critical": True,
+                "peak_limited_appliances": kept_names if self.enabled else [],
                 "managed_amps": round(kept_amps, 2),
                 "managed_power": _kw(kept_amps),
             }
@@ -589,11 +643,13 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
             )
         result = ems_core.optimize(
             inputs, self.appliance_states, excess_amps, peak_amps, energy, now,
-            hold_ramp=grid_stale,
+            hold_ramp=grid_stale, demand=demand_snapshot,
         )
         await control.apply_commands(
             self.hass, result.active, result.fixed_amps_commands, inputs, raw_by_uid
         )
+        if result.peak_limited:
+            self._note_peak_action(now)
         self._persist_state()
 
         active_names = [names_by_uid.get(u, u) for u in result.active]
@@ -613,6 +669,8 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
             # Switched on by EMS but drawing nothing past the grace period.
             "not_consuming_appliance_ids": list(result.not_consuming),
             "not_consuming_appliances": [names_by_uid.get(u, u) for u in result.not_consuming],
+            # Throttled, cut or shed for the quarter-hour peak this cycle.
+            "peak_limited_appliances": [names_by_uid.get(u, u) for u in result.peak_limited],
             "active_appliances": active_names,
             "appliances": appliances,
             "auto_switching": True,

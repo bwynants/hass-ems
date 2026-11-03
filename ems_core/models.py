@@ -99,6 +99,15 @@ class ApplianceState:
     # whenever the budget covers min again or the appliance is off. Transient
     # (not persisted): a restart re-counts from a fresh measurement.
     peak_gate_low_cycles: int = 0
+    # Quarter id (timestamp // 900) in which the peak gate or the critical
+    # backstop shed this appliance. It may not restart in that quarter: a
+    # restart would land on the same tight projection and be shed again a
+    # few cycles later. Cleared on the next quarter. Persisted.
+    peak_shed_quarter: int | None = None
+    # When the setpoint was last lowered while grid-funded (a base-load step
+    # or the quarter tightening). Upward writes are held for
+    # PEAK_CUT_HOLD_SECONDS after it. Transient.
+    peak_cut_at: datetime | None = None
 
 
 @dataclass
@@ -161,6 +170,10 @@ class OptimizeResult:
     # Uids EMS has switched on that have drawn (almost) nothing for longer than
     # the grace period — the "should be consuming but isn't" problem flag.
     not_consuming: list[str] = field(default_factory=list)
+    # Uids the quarter-hour peak logic acted on this cycle: throttled in the
+    # shed debounce, shed, or stepped down while grid-funded. The shell uses
+    # it to hold the peak announcement until the action has shown its effect.
+    peak_limited: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -169,6 +182,24 @@ class ShedResult:
     kept: list[str]
     kept_amps: float
     fixed_amps_commands: list[SetFixedAmps]
+
+
+@dataclass(frozen=True)
+class DemandSnapshot:
+    """The quarter the optimizer projects against (kW and seconds).
+
+    ``so_far_kw`` is this quarter's energy so far expressed as its share of the
+    final quarter average (the current-average source: at a constant draw it
+    climbs linearly from 0 to that draw over the 15 minutes). ``high_limit_kw``
+    is the High limit; ``shed_margin_kw`` the margin under it the projection
+    aims for. ``quarter_id`` is ``timestamp // 900``, the key for the per-quarter
+    shed lockout.
+    """
+    quarter_id: int
+    so_far_kw: float
+    seconds_remaining: int
+    high_limit_kw: float
+    shed_margin_kw: float
 
 
 @dataclass

@@ -127,12 +127,50 @@ DEFAULT_MINIMAL_PEAK_WARNING = 4.0
 DEFAULT_PEAK_HIGH_SAFETY = 0.4
 DEFAULT_PEAK_CRITICAL_SAFETY = 0.2
 
-# Quarterly demand constants (match peakpower.yaml).
+# Quarterly demand constants.
 DEMAND_QUARTER_SECONDS = 900
 DEMAND_MAX_POWER_CAP_KW = 40.0
 DEMAND_HYSTERESIS_KW = 0.2
+# Minute in the quarter from which the High / Critical flags may LATCH (the
+# binary sensors and the critical backstop shed). Earlier the projection
+# rests on too little of the quarter to be trusted.
 DEMAND_HIGH_GATE_MINUTES = 6
 DEMAND_CRITICAL_GATE_MINUTES = 8
+# Minute in the quarter from which High / Critical may be ANNOUNCED (the
+# event entity). Later than the latch on purpose: the sensors may show the
+# situation early, but a spoken warning two minutes later is still in time
+# and skips the projections that settle on their own.
+DEMAND_HIGH_ALERT_MINUTES = 8
+DEMAND_CRITICAL_ALERT_MINUTES = 10
+# Consecutive demand cycles (~10 s each) the flag must stay latched before it
+# is announced. The projection reacts to a single sample of the instantaneous
+# draw, so a 15 s burst (a kettle, a one-cycle setpoint glitch) crossed the
+# limit and was announced as a peak risk the next cycle had already undone.
+DEMAND_HIGH_ALERT_SUSTAIN_CYCLES = 3
+DEMAND_CRITICAL_ALERT_SUSTAIN_CYCLES = 2
+# While the controller is throttling or shedding for peak, hold the
+# announcement for this long after its last action: warn only if the
+# situation is still there once the shed has had its effect on the meter.
+PEAK_ACTION_HOLD_SECONDS = 60
+
+# Proactive peak control. The optimizer projects the quarter: the grid draw
+# that would end the quarter at (High limit − this margin) becomes the
+# ceiling for the rest of the quarter, whenever it is lower than the
+# instantaneous High ceiling. Setpoints are lowered against it first; the
+# shed is the last resort. kW below the High limit.
+DEFAULT_PEAK_SHED_SAFETY = 0.3
+# The projection is skipped this long into a quarter: the current-average
+# source resets a few seconds after the boundary, and a stale value with
+# ~900 s remaining projects a ceiling that is nonsense in either direction.
+DEMAND_PROJECTION_SKIP_SECONDS = 60
+# Setpoint anti-flap. An upward write may raise the setpoint by at most this
+# many amps per write (ramp-down is never limited); and after a reduction that
+# was grid-ceiling driven (a base-load step, a quarter tightening) no upward
+# write happens for PEAK_CUT_HOLD_SECONDS — the load that pushed us down is
+# usually still there, and sawing the setpoint up and down is what makes the
+# meter and the projection chase each other.
+FIXED_AMPS_MAX_STEP_UP = 2.0
+PEAK_CUT_HOLD_SECONDS = 60
 DEMAND_UPDATE_INTERVAL_SECONDS = 10
 # How long held (last-known) demand readings may bridge a source dropout
 # before the feature reports itself unavailable instead of acting on stale

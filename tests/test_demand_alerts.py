@@ -163,3 +163,79 @@ def test_full_scenario_warning_then_cleared_next_quarter():
     # Nothing more owed afterwards, even if resolve is called again.
     _, ev = resolve_quarter(state, old_peak=4.18, new_peak=4.18)
     assert ev == []
+
+
+# --- sustain, announce-minute gates and the controller hold (0.7) -----------
+
+
+def _sustained(state, qid, flags, **kw):
+    events = []
+    for high, critical in flags:
+        state, ev = step_alerts(state, quarter_id=qid, high=high, critical=critical, **kw)
+        events.extend(ev)
+    return state, events
+
+
+def test_high_needs_sustained_cycles():
+    # two cycles latched then gone: silent. Three in a row: announced on the third.
+    _, events = _sustained(DemandAlertState(), 100,
+                           [(True, False), (True, False), (False, False)], high_sustain=3)
+    assert events == []
+    state, events = _sustained(DemandAlertState(), 100,
+                               [(True, False), (True, False), (True, False)], high_sustain=3)
+    assert events == [ALERT_HIGH]
+    assert state.high_cycles == 3
+
+
+def test_flapping_resets_the_sustain_counter():
+    _, events = _sustained(DemandAlertState(), 100,
+                           [(True, False), (True, False), (False, False),
+                            (True, False), (True, False)], high_sustain=3)
+    assert events == []
+
+
+def test_announce_minute_gate():
+    # Latched and sustained at minute 7: silent. Minute 8: announced.
+    state, events = _sustained(DemandAlertState(), 100, [(True, False)] * 3,
+                               high_sustain=3, minute_in_quarter=7, high_alert_minute=8)
+    assert events == []
+    state, events = step_alerts(state, quarter_id=100, high=True, critical=False,
+                                high_sustain=3, minute_in_quarter=8, high_alert_minute=8)
+    assert events == [ALERT_HIGH]
+
+
+def test_critical_has_its_own_sustain_and_minute():
+    state, events = _sustained(DemandAlertState(), 100, [(True, True)] * 2,
+                               critical_sustain=2, minute_in_quarter=9,
+                               critical_alert_minute=10, high_alert_minute=8)
+    # High (sustain 1 here) announced at once; Critical waits for minute 10.
+    assert events == [ALERT_HIGH]
+    state, events = step_alerts(state, quarter_id=100, high=True, critical=True,
+                                critical_sustain=2, minute_in_quarter=10,
+                                critical_alert_minute=10, high_alert_minute=8)
+    assert events == [ALERT_CRITICAL]
+
+
+def test_hold_defers_until_it_lapses_and_the_risk_is_still_there():
+    # EMS is shedding (hold): sustained High stays silent...
+    state, events = _sustained(DemandAlertState(), 100, [(True, False)] * 4,
+                               high_sustain=3, hold=True)
+    assert events == []
+    # ...the shed worked: the flag drops, nothing is ever announced.
+    state, events = step_alerts(state, quarter_id=100, high=False, critical=False,
+                                high_sustain=3, hold=False)
+    assert events == []
+    # Other quarter: the shed did not help, the hold lapses -> announced at once
+    # (the counter kept running through the hold).
+    state, events = _sustained(DemandAlertState(), 200, [(True, False)] * 4,
+                               high_sustain=3, hold=True)
+    state, events = step_alerts(state, quarter_id=200, high=True, critical=False,
+                                high_sustain=3, hold=False)
+    assert events == [ALERT_HIGH]
+
+
+def test_sustain_counters_round_trip_persistence():
+    state = DemandAlertState(quarter_id=100, high_cycles=2, critical_cycles=1)
+    assert DemandAlertState.from_dict(state.as_dict()) == state
+    # pre-0.7 store without the counters
+    assert DemandAlertState.from_dict({"quarter_id": 100}).high_cycles == 0

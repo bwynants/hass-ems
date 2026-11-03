@@ -47,9 +47,11 @@ from .const import (
     CONF_MINIMAL_PEAK_WARNING,
     CONF_PEAK_HIGH_SAFETY,
     CONF_PEAK_CRITICAL_SAFETY,
+    CONF_PEAK_SHED_SAFETY,
     DEFAULT_MINIMAL_PEAK_WARNING,
     DEFAULT_PEAK_HIGH_SAFETY,
     DEFAULT_PEAK_CRITICAL_SAFETY,
+    DEFAULT_PEAK_SHED_SAFETY,
     CONF_COST_PEAK,
     CONF_COST_OFFPEAK,
     CONF_GAIN_PEAK,
@@ -146,6 +148,7 @@ def _global_schema(current: dict | None) -> vol.Schema:
         _default_marker(CONF_MINIMAL_PEAK_WARNING, current, DEFAULT_MINIMAL_PEAK_WARNING): vol.All(vol.Coerce(float), vol.Range(min=0)),
         _default_marker(CONF_PEAK_HIGH_SAFETY, current, DEFAULT_PEAK_HIGH_SAFETY): vol.All(vol.Coerce(float), vol.Range(min=0)),
         _default_marker(CONF_PEAK_CRITICAL_SAFETY, current, DEFAULT_PEAK_CRITICAL_SAFETY): vol.All(vol.Coerce(float), vol.Range(min=0)),
+        _default_marker(CONF_PEAK_SHED_SAFETY, current, DEFAULT_PEAK_SHED_SAFETY): vol.All(vol.Coerce(float), vol.Range(min=0)),
         # Electricity prices (€/kWh) for the off_peak-mode breakeven decision:
         # selectable sensor/number entities (dynamic tariffs), read each cycle.
         # Unset ⇒ the built-in defaults.

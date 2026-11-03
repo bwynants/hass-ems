@@ -5,5 +5,5 @@
   "config_flow": true,
   "documentation": "https://github.com/bwynants/energy-management-system",
   "iot_class": "calculated",
-  "version": "0.6.1"
+  "version": "0.7.0"
 }

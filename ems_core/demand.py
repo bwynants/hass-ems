@@ -7,8 +7,45 @@ from .const import (
     DEMAND_HYSTERESIS_KW,
     DEMAND_HIGH_GATE_MINUTES,
     DEMAND_CRITICAL_GATE_MINUTES,
+    DEMAND_PROJECTION_SKIP_SECONDS,
 )
-from .models import DemandResult
+from .models import DemandResult, DemandSnapshot
+
+
+def rest_of_quarter_ceiling_kw(
+    so_far_kw: float, seconds_remaining: int, limit_kw: float
+) -> float | None:
+    """Average power the house may draw from now to the quarter's end so the
+    quarter ends at ``limit_kw``; never negative.
+
+    None during the first ``DEMAND_PROJECTION_SKIP_SECONDS`` of a quarter: the
+    current-average source lags the boundary by a few seconds, and the stale
+    value of the finished quarter with ~900 s remaining projects a ceiling
+    that is nonsense in either direction (collapsed to 0, or ballooned).
+    """
+    if seconds_remaining > DEMAND_QUARTER_SECONDS - DEMAND_PROJECTION_SKIP_SECONDS:
+        return None
+    remaining = max(seconds_remaining, 1)
+    return max((limit_kw - so_far_kw) * DEMAND_QUARTER_SECONDS / remaining, 0.0)
+
+
+def projected_ceiling_amps(demand: DemandSnapshot, voltage: float) -> float | None:
+    """The grid-import ceiling (amps) for the rest of the quarter.
+
+    The draw that ends the quarter at ``high_limit − shed_margin``, in amps at
+    ``voltage``. The optimizer uses the lower of this and the instantaneous
+    High ceiling, so it can only ever be stricter. None when the projection
+    is not usable (quarter boundary) or the voltage is.
+    """
+    if voltage <= 0:
+        return None
+    kw = rest_of_quarter_ceiling_kw(
+        demand.so_far_kw, demand.seconds_remaining,
+        demand.high_limit_kw - demand.shed_margin_kw,
+    )
+    if kw is None:
+        return None
+    return kw * 1000.0 / voltage
 
 
 def compute_demand(

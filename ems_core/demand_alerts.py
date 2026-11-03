@@ -41,6 +41,9 @@ class DemandAlertState:
     high_announced: bool = False
     critical_announced: bool = False
     pending_verdict: bool = False
+    # Consecutive cycles the flag has been latched (the sustain counters).
+    high_cycles: int = 0
+    critical_cycles: int = 0
 
     def as_dict(self) -> dict:
         return {
@@ -48,6 +51,8 @@ class DemandAlertState:
             "high_announced": self.high_announced,
             "critical_announced": self.critical_announced,
             "pending_verdict": self.pending_verdict,
+            "high_cycles": self.high_cycles,
+            "critical_cycles": self.critical_cycles,
         }
 
     @classmethod
@@ -64,6 +69,8 @@ class DemandAlertState:
             high_announced=bool(data.get("high_announced", False)),
             critical_announced=bool(data.get("critical_announced", False)),
             pending_verdict=bool(data.get("pending_verdict", False)),
+            high_cycles=int(data.get("high_cycles", 0) or 0),
+            critical_cycles=int(data.get("critical_cycles", 0) or 0),
         )
 
 
@@ -73,12 +80,27 @@ def step_alerts(
     quarter_id: int,
     high: bool,
     critical: bool,
+    minute_in_quarter: int | None = None,
+    hold: bool = False,
+    high_sustain: int = 1,
+    critical_sustain: int = 1,
+    high_alert_minute: int = 0,
+    critical_alert_minute: int = 0,
 ) -> tuple[DemandAlertState, list[str]]:
     """Advance the alert state by one control cycle.
 
     ``high``/``critical`` are the latched flags from :func:`compute_demand`.
     Returns the new state and the threshold alerts to emit this cycle (zero or
     one of ``high``/``critical``).
+
+    An announcement additionally needs the flag latched for ``*_sustain``
+    consecutive cycles, the quarter to have reached ``*_alert_minute`` (when
+    ``minute_in_quarter`` is given), and ``hold`` to be False — the shell
+    raises ``hold`` while the controller is throttling or shedding for peak,
+    so a risk EMS is already removing is not announced; if it is still there
+    once the hold lapses, it is announced then. The sustain counters keep
+    running through a hold, so a lapsed hold announces at once. Flapping
+    resets the counters.
 
     A quarter change rolls the finished quarter's "warned" status into
     ``pending_verdict`` — but only for the *directly* following quarter. After
@@ -95,10 +117,27 @@ def step_alerts(
             pending_verdict=bool(warned and consecutive),
         )
 
-    if critical and not state.critical_announced:
+    state = replace(
+        state,
+        high_cycles=state.high_cycles + 1 if high else 0,
+        critical_cycles=state.critical_cycles + 1 if critical else 0,
+    )
+
+    def _minute_ok(minute: int) -> bool:
+        return minute_in_quarter is None or minute_in_quarter >= minute
+
+    if (
+        critical and not state.critical_announced
+        and state.critical_cycles >= critical_sustain
+        and _minute_ok(critical_alert_minute) and not hold
+    ):
         events.append(ALERT_CRITICAL)
         state = replace(state, critical_announced=True, high_announced=True)
-    elif high and not state.high_announced:
+    elif (
+        high and not state.high_announced
+        and state.high_cycles >= high_sustain
+        and _minute_ok(high_alert_minute) and not hold
+    ):
         events.append(ALERT_HIGH)
         state = replace(state, high_announced=True)
 
