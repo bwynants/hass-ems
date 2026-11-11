@@ -20,6 +20,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
+from .const import (
+    DEMAND_HIGH_ALERT_MINUTES, DEMAND_CRITICAL_ALERT_MINUTES,
+    DEMAND_HIGH_ALERT_SUSTAIN_CYCLES, DEMAND_CRITICAL_ALERT_SUSTAIN_CYCLES,
+)
+
 ALERT_HIGH = "high"
 ALERT_CRITICAL = "critical"
 ALERT_CLEARED = "cleared"
@@ -42,6 +47,8 @@ class DemandAlertState:
     critical_announced: bool = False
     pending_verdict: bool = False
     # Consecutive cycles the flag has been latched (the sustain counters).
+    # Transient: not persisted — a restart simply re-counts a few cycles,
+    # and persisting them would write the store every cycle of a High.
     high_cycles: int = 0
     critical_cycles: int = 0
 
@@ -51,8 +58,6 @@ class DemandAlertState:
             "high_announced": self.high_announced,
             "critical_announced": self.critical_announced,
             "pending_verdict": self.pending_verdict,
-            "high_cycles": self.high_cycles,
-            "critical_cycles": self.critical_cycles,
         }
 
     @classmethod
@@ -69,8 +74,6 @@ class DemandAlertState:
             high_announced=bool(data.get("high_announced", False)),
             critical_announced=bool(data.get("critical_announced", False)),
             pending_verdict=bool(data.get("pending_verdict", False)),
-            high_cycles=int(data.get("high_cycles", 0) or 0),
-            critical_cycles=int(data.get("critical_cycles", 0) or 0),
         )
 
 
@@ -82,10 +85,10 @@ def step_alerts(
     critical: bool,
     minute_in_quarter: int | None = None,
     hold: bool = False,
-    high_sustain: int = 1,
-    critical_sustain: int = 1,
-    high_alert_minute: int = 0,
-    critical_alert_minute: int = 0,
+    high_sustain: int = DEMAND_HIGH_ALERT_SUSTAIN_CYCLES,
+    critical_sustain: int = DEMAND_CRITICAL_ALERT_SUSTAIN_CYCLES,
+    high_alert_minute: int = DEMAND_HIGH_ALERT_MINUTES,
+    critical_alert_minute: int = DEMAND_CRITICAL_ALERT_MINUTES,
 ) -> tuple[DemandAlertState, list[str]]:
     """Advance the alert state by one control cycle.
 
@@ -95,7 +98,8 @@ def step_alerts(
 
     An announcement additionally needs the flag latched for ``*_sustain``
     consecutive cycles, the quarter to have reached ``*_alert_minute`` (when
-    ``minute_in_quarter`` is given), and ``hold`` to be False — the shell
+    ``minute_in_quarter`` is given; the policy values default to the
+    constants, tests override them), and ``hold`` to be False — the shell
     raises ``hold`` while the controller is throttling or shedding for peak,
     so a risk EMS is already removing is not announced; if it is still there
     once the hold lapses, it is announced then. The sustain counters keep
@@ -123,20 +127,18 @@ def step_alerts(
         critical_cycles=state.critical_cycles + 1 if critical else 0,
     )
 
-    def _minute_ok(minute: int) -> bool:
-        return minute_in_quarter is None or minute_in_quarter >= minute
-
+    minute = 99 if minute_in_quarter is None else minute_in_quarter
     if (
-        critical and not state.critical_announced
+        critical and not state.critical_announced and not hold
         and state.critical_cycles >= critical_sustain
-        and _minute_ok(critical_alert_minute) and not hold
+        and minute >= critical_alert_minute
     ):
         events.append(ALERT_CRITICAL)
         state = replace(state, critical_announced=True, high_announced=True)
     elif (
-        high and not state.high_announced
+        high and not state.high_announced and not hold
         and state.high_cycles >= high_sustain
-        and _minute_ok(high_alert_minute) and not hold
+        and minute >= high_alert_minute
     ):
         events.append(ALERT_HIGH)
         state = replace(state, high_announced=True)

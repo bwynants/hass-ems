@@ -19,7 +19,6 @@ from .models import (
     OptimizeResult,
     ShedResult,
     DemandResult,
-    DemandSnapshot,
 )
 from .energy import (
     normalise_power,
@@ -28,9 +27,10 @@ from .energy import (
     breakeven,
     actual_amps,
     managed_consumption_amps,
+    kw_to_amps,
 )
 from .fixed_amps import step_target, decide
-from .demand import compute_demand, rest_of_quarter_ceiling_kw, projected_ceiling_amps
+from .demand import compute_demand, rest_of_quarter_kw
 from .demand_alerts import (
     ALERT_TYPES, DemandAlertState, step_alerts, resolve_quarter, is_new_month_peak,
 )
@@ -48,18 +48,17 @@ __all__ = [
     "OptimizeResult",
     "ShedResult",
     "DemandResult",
-    "DemandSnapshot",
     "normalise_power",
     "calculate_excess_amps",
     "scaled_amps",
     "breakeven",
     "actual_amps",
     "managed_consumption_amps",
+    "kw_to_amps",
     "step_target",
     "decide",
     "compute_demand",
-    "rest_of_quarter_ceiling_kw",
-    "projected_ceiling_amps",
+    "rest_of_quarter_kw",
     "ALERT_TYPES",
     "DemandAlertState",
     "step_alerts",

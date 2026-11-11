@@ -12,8 +12,8 @@ from ems_core.const import (
 )
 from ems_core.models import (
     ApplianceInput, ApplianceState, EnergyInput, SetFixedAmps, OptimizeResult,
-    DemandSnapshot,
 )
+from ems_core.optimizer import quarter_id
 from ems_core.const import (
     MODE_FORCED, MODE_PARTIAL_SOLAR, MODE_FULL_SOLAR, MODE_OFF_PEAK, MODE_UNMANAGED,
 )
@@ -551,10 +551,15 @@ def test_peak_cap_off_goes_through_state_machine():
     r3 = optimize([app], states, excess_amps=0.0, peak_amps=8.0,
                   energy=_energy(), now=t_off + timedelta(seconds=10))
     assert r3.active == []
-    # Past the window -> on again with a FRESH setpoint write. Budget = 8 A peak
+    # Past the window but still in the same quarter -> still off: a peak
+    # shed locks the appliance out until the next quarter (0.7).
+    r3b = optimize([app], states, excess_amps=0.0, peak_amps=8.0,
+                   energy=_energy(), now=t_off + timedelta(seconds=80))
+    assert r3b.active == []
+    # Next quarter -> on again with a FRESH setpoint write. Budget = 8 A peak
     # minus the 1 A forced reserve = 7 A -> written 6.5 A (not the stale 16).
     r4 = optimize([app], states, excess_amps=0.0, peak_amps=8.0,
-                  energy=_energy(), now=t_off + timedelta(seconds=80))
+                  energy=_energy(), now=t_off + timedelta(seconds=900))
     assert r4.active == ["a"]
     assert r4.fixed_amps_commands == [SetFixedAmps("a", 6.5)]
 
@@ -1109,10 +1114,9 @@ PEAK_A = HIGH_KW * 1000 / 230          # 15.65 A instantaneous ceiling
 BASE_A = -3.0                          # ~0.7 kW base import (signed surplus)
 
 
-def _snapshot(so_far=0.0, remaining=300, quarter=1000, margin=0.3):
-    return DemandSnapshot(quarter_id=quarter, so_far_kw=so_far,
-                          seconds_remaining=remaining, high_limit_kw=HIGH_KW,
-                          shed_margin_kw=margin)
+def _proj(kw):
+    """A projected ceiling (kW, as the demand side publishes it) in amps."""
+    return kw * 1000 / 230
 
 
 def _charger(**kw):
@@ -1129,14 +1133,16 @@ def _running(last=11.5):
 
 def test_projected_ceiling_lowers_setpoint_before_the_gate():
     # Instantaneous budget: -3 + (15.65 - 1 reserve) = 11.65 A -> holds 11.5.
-    # But the quarter has over-consumed: 2.6 kW banked with 300 s left means
-    # only (3.3 - 2.6) * 3 = 2.1 kW = 9.13 A may be drawn from now on. The
-    # setpoint is cut to what fits (9.13 - 3.0 base = 6.13 -> 6.0) at once;
-    # the appliance keeps running (6.13 >= min 6), nothing is shed.
+    # But the quarter has over-consumed: the demand side projects that only
+    # 2.1 kW = 9.13 A may be drawn from now on. The setpoint is cut to what
+    # fits (9.13 - 3.0 base = 6.13 -> 6.0) at once; the appliance keeps
+    # running (6.13 >= min 6), nothing is shed. Each ceiling carries one
+    # safety: stacking the 1 A reserve on the projected one would give
+    # 5.13 A and shed the appliance for nothing.
     app = _charger()
     states = _running()
     res = optimize([app], states, excess_amps=BASE_A, peak_amps=PEAK_A,
-                   energy=_energy(), now=T0, demand=_snapshot(so_far=2.6, remaining=300))
+                   energy=_energy(), now=T0, proj_amps=_proj(2.1))
     assert res.active == ["a"]
     assert res.fixed_amps_commands == [SetFixedAmps("a", 6.0)]
     assert res.peak_limited == ["a"]
@@ -1146,75 +1152,62 @@ def test_projected_ceiling_lowers_setpoint_before_the_gate():
 
 
 def test_projected_ceiling_never_looser_than_instantaneous():
-    # A quiet quarter: 0.2 kW banked, 300 s left -> the projection would allow
-    # 9.3 kW. The instantaneous High ceiling stays the floor, so the result is
-    # identical to a cycle without the projection (reserve included).
+    # A quiet quarter: the projection would allow 9.3 kW. The instantaneous
+    # High ceiling stays the floor, so the result is identical to a cycle
+    # without the projection (reserve included).
     app = _charger()
     without = optimize([app], _running(), excess_amps=BASE_A, peak_amps=PEAK_A,
                        energy=_energy(), now=T0)
     with_ = optimize([app], _running(), excess_amps=BASE_A, peak_amps=PEAK_A,
-                     energy=_energy(), now=T0, demand=_snapshot(so_far=0.2, remaining=300))
+                     energy=_energy(), now=T0, proj_amps=_proj(9.3))
     assert with_.fixed_amps_commands == without.fixed_amps_commands
     assert with_.active == without.active == ["a"]
     assert with_.peak_limited == []
 
 
-def test_projection_skipped_in_the_first_minute_of_a_quarter():
-    # 880 s remaining with a stale 3.0 kW "so far" (the finished quarter's
-    # value, source not reset yet) would collapse the ceiling to ~0.3 kW and
-    # shed the charger. Skipped: behaves as without the projection.
+def test_two_ceilings_do_not_saw_when_the_binding_one_changes_hands():
+    # Instantaneous ceiling minus reserve = 14.65 A; a projected ceiling that
+    # hovers just around it must not move the budget by the reserve: the
+    # effective ceiling is min(14.65, projected), continuous.
     app = _charger()
-    without = optimize([app], _running(), excess_amps=BASE_A, peak_amps=PEAK_A,
-                       energy=_energy(), now=T0)
-    with_ = optimize([app], _running(), excess_amps=BASE_A, peak_amps=PEAK_A,
-                     energy=_energy(), now=T0, demand=_snapshot(so_far=3.0, remaining=880))
-    assert with_.fixed_amps_commands == without.fixed_amps_commands
-    assert with_.active == ["a"]
+    r1 = optimize([app], _running(), excess_amps=BASE_A, peak_amps=PEAK_A,
+                  energy=_energy(), now=T0, proj_amps=14.6)
+    r2 = optimize([app], _running(), excess_amps=BASE_A, peak_amps=PEAK_A,
+                  energy=_energy(), now=T0, proj_amps=14.7)
+    v1 = r1.fixed_amps_commands[0].value if r1.fixed_amps_commands else 11.5
+    v2 = r2.fixed_amps_commands[0].value if r2.fixed_amps_commands else 11.5
+    assert abs(v1 - v2) <= 0.5
 
 
 def test_projected_shed_locks_out_until_next_quarter():
-    # 3.2 kW banked, 300 s left: (3.3 - 3.2) * 3 = 0.3 kW = 1.3 A ceiling,
-    # minus 3 A base -> nothing fits. Throttled through the grace cycles, then
-    # shed and locked out for the quarter.
+    # A 0.3 kW = 1.3 A projected ceiling minus 3 A base: nothing fits.
+    # Throttled through the grace cycles, then shed and locked out for the
+    # quarter (T0 is 08:00:00, so the quarter runs to 08:15).
     app = _charger()
     states = _running()
-    tight = _snapshot(so_far=3.2, remaining=300, quarter=1000)
     for i in range(PEAK_GATE_SHED_CYCLES - 1):
         res = optimize([app], states, excess_amps=BASE_A, peak_amps=PEAK_A,
-                       energy=_energy(), now=T0 + timedelta(seconds=10 * i), demand=tight)
+                       energy=_energy(), now=T0 + timedelta(seconds=10 * i), proj_amps=_proj(0.3))
         assert res.active == ["a"]
         assert res.peak_limited == ["a"]
     t_shed = T0 + timedelta(seconds=10 * (PEAK_GATE_SHED_CYCLES - 1))
     res = optimize([app], states, excess_amps=BASE_A, peak_amps=PEAK_A,
-                   energy=_energy(), now=t_shed, demand=tight)
+                   energy=_energy(), now=t_shed, proj_amps=_proj(0.3))
     assert res.active == []
     assert res.peak_limited == ["a"]
-    assert states["a"].peak_shed_quarter == 1000
+    assert states["a"].peak_shed_quarter == quarter_id(T0)
     # Same quarter, generous budget (a load switched off, hysteresis long
     # expired): still off. This is the restart-into-the-same-projection case.
     app_off = _charger(entity_on=False)
-    roomy = _snapshot(so_far=0.5, remaining=200, quarter=1000)
     res = optimize([app_off], states, excess_amps=BASE_A, peak_amps=PEAK_A,
-                   energy=_energy(), now=t_shed + timedelta(seconds=600), demand=roomy)
+                   energy=_energy(), now=t_shed + timedelta(seconds=600), proj_amps=_proj(9.0))
     assert res.active == []
-    assert states["a"].peak_shed_quarter == 1000
+    assert states["a"].peak_shed_quarter == quarter_id(T0)
     # Next quarter: the lockout clears and it restarts on the first cycle
     # with room.
-    next_q = _snapshot(so_far=0.1, remaining=800, quarter=1001)
     res = optimize([app_off], states, excess_amps=BASE_A, peak_amps=PEAK_A,
-                   energy=_energy(), now=t_shed + timedelta(seconds=900), demand=next_q)
+                   energy=_energy(), now=t_shed + timedelta(seconds=900), proj_amps=_proj(9.0))
     assert res.active == ["a"]
-    assert states["a"].peak_shed_quarter is None
-
-
-def test_lockout_does_not_apply_without_demand_snapshot():
-    # Shed without the demand feature: no quarter to lock out of.
-    app = _charger()
-    states = _running()
-    for i in range(PEAK_GATE_SHED_CYCLES):
-        res = optimize([app], states, excess_amps=-20.0, peak_amps=PEAK_A,
-                       energy=_energy(), now=T0 + timedelta(seconds=10 * i))
-    assert res.active == []
     assert states["a"].peak_shed_quarter is None
 
 
@@ -1229,25 +1222,47 @@ def test_grid_cut_holds_ramp_up_then_ramps_in_steps():
     assert r.fixed_amps_commands == [SetFixedAmps("a", 6.5)]
     assert r.peak_limited == ["a"]
     assert states["a"].peak_cut_at == T0
-    r = optimize([app], states, excess_amps=BASE_A, peak_amps=PEAK_A, energy=_energy(),
-                 now=T0 + timedelta(seconds=10))
+    # (the entity follows each write; a lagging one would be re-asserted)
+    r = optimize([_charger(fixed_amps_value=6.5)], states, excess_amps=BASE_A, peak_amps=PEAK_A,
+                 energy=_energy(), now=T0 + timedelta(seconds=10))
     assert r.active == ["a"] and r.fixed_amps_commands == []
     assert r.peak_limited == []
     t = T0 + timedelta(seconds=PEAK_CUT_HOLD_SECONDS)
-    r = optimize([app], states, excess_amps=BASE_A, peak_amps=PEAK_A, energy=_energy(), now=t)
+    r = optimize([_charger(fixed_amps_value=6.5)], states, excess_amps=BASE_A, peak_amps=PEAK_A,
+                 energy=_energy(), now=t)
     assert r.fixed_amps_commands == [SetFixedAmps("a", 6.5 + FIXED_AMPS_MAX_STEP_UP)]
-    r = optimize([app], states, excess_amps=BASE_A, peak_amps=PEAK_A, energy=_energy(),
-                 now=t + timedelta(seconds=10))
+    r = optimize([_charger(fixed_amps_value=8.5)], states, excess_amps=BASE_A, peak_amps=PEAK_A,
+                 energy=_energy(), now=t + timedelta(seconds=10))
     assert r.fixed_amps_commands == [SetFixedAmps("a", 6.5 + 2 * FIXED_AMPS_MAX_STEP_UP)]
     # 11.65 A budget quantises down with the half-step deadband to 11.0, and
     # holds there (11.65 is inside the [10.75, 11.75) band of 11.0).
-    r = optimize([app], states, excess_amps=BASE_A, peak_amps=PEAK_A, energy=_energy(),
-                 now=t + timedelta(seconds=20))
+    r = optimize([_charger(fixed_amps_value=10.5)], states, excess_amps=BASE_A, peak_amps=PEAK_A,
+                 energy=_energy(), now=t + timedelta(seconds=20))
     assert r.fixed_amps_commands == [SetFixedAmps("a", 11.0)]
-    # (the entity now reads 11.0, so there is nothing to re-assert)
     r = optimize([_charger(fixed_amps_value=11.0)], states, excess_amps=BASE_A,
                  peak_amps=PEAK_A, energy=_energy(), now=t + timedelta(seconds=30))
     assert r.fixed_amps_commands == []
+
+
+def test_cut_hold_still_reasserts_a_drifted_entity():
+    # During the hold an upward move is clamped, but an entity that was
+    # changed by hand is still written back to the held setpoint.
+    app = _charger()
+    states = _running()
+    optimize([app], states, excess_amps=-8.0, peak_amps=PEAK_A, energy=_energy(), now=T0)
+    drifted = _charger(fixed_amps_value=16.0)
+    r = optimize([drifted], states, excess_amps=BASE_A, peak_amps=PEAK_A, energy=_energy(),
+                 now=T0 + timedelta(seconds=10))
+    assert r.fixed_amps_commands == [SetFixedAmps("a", 6.5)]
+
+
+def test_ramp_cap_only_with_the_demand_feature():
+    # No instantaneous ceiling (no demand feature): a forced appliance on a
+    # growing surplus may jump straight to what the budget allows.
+    app = _charger()
+    states = _running(last=6.0)
+    r = optimize([app], states, excess_amps=12.0, peak_amps=None, energy=_energy(), now=T0)
+    assert r.fixed_amps_commands == [SetFixedAmps("a", 11.5)]
 
 
 def test_solar_funded_reduction_is_not_a_grid_cut():
@@ -1263,31 +1278,18 @@ def test_solar_funded_reduction_is_not_a_grid_cut():
     assert r.peak_limited == []
 
 
-def test_projected_ceiling_carries_its_own_margin_not_the_reserve():
-    # Each ceiling has one safety: the 1 A reserve on the instantaneous one,
-    # the shed margin on the projected one. Projected 9.13 A - 3 A base =
-    # 6.13 A -> 6.0 and still running; stacking the reserve on top would give
-    # 5.13 A and shed the appliance for nothing.
-    app = _charger()
-    states = _running()
-    res = optimize([app], states, excess_amps=BASE_A, peak_amps=PEAK_A,
-                   energy=_energy(), now=T0, demand=_snapshot(so_far=2.6, remaining=300))
-    assert res.active == ["a"]
-    assert states["a"].peak_gate_low_cycles == 0
-
-
 def test_critical_shed_sets_lockout_and_cut_hold():
     throttled = _charger(name="t", entity_on=True, fixed_amps_value=12.0)
     at_min = _charger(name="m", entity_on=True, fixed_amps_value=6.0)
     states = {"t": ApplianceState(is_on=True), "m": ApplianceState(is_on=True)}
-    res = critical_shed([throttled, at_min], states, T0, quarter_id=1000)
+    res = critical_shed([throttled, at_min], states, T0)
     assert res.kept == ["t"]
     assert states["t"].peak_cut_at == T0 and states["t"].peak_shed_quarter is None
-    assert states["m"].peak_shed_quarter == 1000 and not states["m"].is_on
+    assert states["m"].peak_shed_quarter == quarter_id(T0) and not states["m"].is_on
     # The shed one stays off for the rest of the quarter even with room.
     off = _charger(name="m", entity_on=False)
     r = optimize([off], states, excess_amps=BASE_A, peak_amps=PEAK_A, energy=_energy(),
-                 now=T0 + timedelta(seconds=300), demand=_snapshot(so_far=0.5, remaining=300))
+                 now=T0 + timedelta(seconds=300), proj_amps=_proj(9.0))
     assert r.active == []
 
 
@@ -1296,25 +1298,8 @@ def test_lockout_is_cleared_by_a_quarter_change_even_while_on():
     # from an earlier quarter: the stale lockout clears, control is normal.
     app = _charger()
     states = _running()
-    states["a"].peak_shed_quarter = 999
+    states["a"].peak_shed_quarter = quarter_id(T0) - 1
     r = optimize([app], states, excess_amps=BASE_A, peak_amps=PEAK_A, energy=_energy(),
-                 now=T0, demand=_snapshot(so_far=0.2, remaining=300, quarter=1000))
+                 now=T0, proj_amps=_proj(9.0))
     assert r.active == ["a"]
     assert states["a"].peak_shed_quarter is None
-
-
-def test_two_ceilings_do_not_saw_when_the_binding_one_changes_hands():
-    # Instantaneous ceiling minus reserve = 14.65 A; projected ceiling that
-    # hovers just around it (14.6 / 14.7 A) must not move the budget by the
-    # reserve: the effective ceiling is min(14.65, projected), continuous.
-    app = _charger()
-    # 14.6 A projected: so_far such that (3.3 - so_far) * 900 / 300 = 3.358 kW
-    just_below = _snapshot(so_far=3.3 - 3.358 * 300 / 900, remaining=300)
-    just_above = _snapshot(so_far=3.3 - 3.381 * 300 / 900, remaining=300)
-    r1 = optimize([app], _running(), excess_amps=BASE_A, peak_amps=PEAK_A,
-                  energy=_energy(), now=T0, demand=just_below)
-    r2 = optimize([app], _running(), excess_amps=BASE_A, peak_amps=PEAK_A,
-                  energy=_energy(), now=T0, demand=just_above)
-    v1 = r1.fixed_amps_commands[0].value if r1.fixed_amps_commands else 11.5
-    v2 = r2.fixed_amps_commands[0].value if r2.fixed_amps_commands else 11.5
-    assert abs(v1 - v2) <= 0.5

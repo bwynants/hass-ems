@@ -209,6 +209,12 @@
       },
       "max_power_to_peak_limit": {
         "name": "Max vermogen tot pieklimiet"
+      },
+      "quarterly_demand_shed_limit": {
+        "name": "Afschakellimiet kwartiervermogen"
+      },
+      "projected_ceiling": {
+        "name": "Geprojecteerd plafond kwartiervermogen"
       }
     },
     "binary_sensor": {

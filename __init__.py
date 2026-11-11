@@ -210,6 +210,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     coordinator = SolarApplianceCoordinator(hass, entry)
     coordinator.demand_coordinator = demand_coordinator
+    # ...and the demand coordinator reads the control side's published
+    # peak action to hold its announcements while EMS is shedding.
+    demand_coordinator.control_coordinator = coordinator
     # Restore the appliances' runtime state (on/off, hysteresis timers, current
     # setpoints) BEFORE the first refresh, so that cycle starts from what the
     # appliances were actually doing instead of from a blank slate.

@@ -13,20 +13,27 @@ import logging
 
 from .const import (
     MODE_FORCED, MODE_PARTIAL_SOLAR, MODE_FULL_SOLAR, MODE_OFF_PEAK, MODE_UNMANAGED,
-    CONTROLLER_UPDATE_INTERVAL,
+    CONTROLLER_UPDATE_INTERVAL, DEMAND_QUARTER_SECONDS,
     FORCED_PEAK_HEADROOM_AMPS, SUNDOWN_SOLAR_W, ON_OFF_HYSTERESIS_AMPS,
     PEAK_GATE_SHED_CYCLES, FIXED_AMPS_MAX_STEP_UP, PEAK_CUT_HOLD_SECONDS,
     NOT_CONSUMING_AMPS, NOT_CONSUMING_GRACE_SECONDS, SOC_FULL_PERCENT,
 )
 from .models import (
-    ApplianceInput, ApplianceState, EnergyInput, DemandSnapshot,
+    ApplianceInput, ApplianceState, EnergyInput,
     SetFixedAmps, OptimizeResult, ShedResult,
 )
 from .energy import scaled_amps, breakeven
-from .demand import projected_ceiling_amps
 from . import fixed_amps
 
 _LOGGER = logging.getLogger(__name__)
+
+_PEAK_CUT_HOLD = timedelta(seconds=PEAK_CUT_HOLD_SECONDS)
+
+
+def quarter_id(now) -> int:
+    """The quarter hour ``now`` falls in (``timestamp // 900``), the key of
+    the per-quarter shed lockout; the same id the demand side uses."""
+    return int(now.timestamp() // DEMAND_QUARTER_SECONDS)
 
 
 def record_excess(
@@ -277,7 +284,7 @@ def optimize(
     energy: EnergyInput,
     now,
     hold_ramp: bool = False,
-    demand: DemandSnapshot | None = None,
+    proj_amps: float | None = None,
 ) -> OptimizeResult:
     """Allocate the surplus across appliances in priority order.
 
@@ -286,12 +293,13 @@ def optimize(
     averaging history. Returns the active appliance uids, the draw decided this
     cycle, and the fixed_amps write commands for the shell to apply.
 
-    ``peak_amps`` is the instantaneous grid ceiling (the High limit).
-    ``demand``, when given, adds the quarter projection: the ceiling becomes
-    the lower of ``peak_amps`` and the draw that ends the quarter at
-    ``High − shed margin``, so setpoints are lowered — and as a last resort
-    the appliance shed — before the High limit itself is reached, and an
-    appliance shed for peak stays off for the rest of that quarter.
+    ``peak_amps`` is the instantaneous grid ceiling (the High limit);
+    ``proj_amps`` the projected one for the rest of the quarter (the demand
+    side's ``projected_ceiling``, None at the quarter boundary). The lower of
+    the two bounds the grid draw, so setpoints are lowered — and as a last
+    resort the appliance shed — before the High limit itself is reached. With
+    the demand feature on, an appliance shed for peak stays off for the rest
+    of its quarter.
     """
     sorted_apps = sorted(appliances, key=lambda a: a.priority)
     active: list[str] = []          # appliance uids
@@ -303,24 +311,21 @@ def optimize(
     decided_amps = 0.0
     peak_remaining = peak_amps
 
-    # Projected ceiling for the rest of the quarter, kept NEXT TO the
-    # instantaneous one rather than folded into it: each carries its own
-    # safety (the forced reserve on the instantaneous ceiling, the shed
-    # margin on the projected one) and the effective ceiling is the lower of
-    # the two. Folding them with a conditional reserve made the budget jump
-    # by the reserve each time the binding ceiling changed hands — a 1 A
-    # sawtooth over every quarter in the 2026-11-03 replay. The projection can
-    # only tighten: late in a quarter that started quietly it allows far more
-    # than the High limit, and the minimum keeps the instantaneous bound as
-    # the floor. Both are drawn down by the grid draw allocated below.
-    proj_remaining = (
-        projected_ceiling_amps(demand, energy.voltage)
-        if demand is not None and peak_remaining is not None else None
-    )
+    # The projected ceiling is kept NEXT TO the instantaneous one rather than
+    # folded into it: each carries its own safety (the forced reserve on the
+    # instantaneous ceiling, the shed margin on the projected one) and the
+    # effective ceiling is the lower of the two. Folding them with a
+    # conditional reserve made the budget jump by the reserve each time the
+    # binding ceiling changed hands — a 1 A sawtooth over every quarter in the
+    # 2026-11-03 replay. The projection can only tighten: late in a quarter
+    # that started quietly it allows far more than the High limit, and the
+    # minimum keeps the instantaneous bound as the floor. Both are drawn down
+    # by the grid draw allocated below.
+    proj_remaining = proj_amps if peak_remaining is not None else None
     if proj_remaining is not None:
         _LOGGER.debug(
-            "peak ceiling: instantaneous %.2f A, projected %.2f A for the %ds left in the quarter",
-            peak_remaining, proj_remaining, demand.seconds_remaining,
+            "peak ceiling: instantaneous %.2f A, projected %.2f A for the rest of the quarter",
+            peak_remaining, proj_remaining,
         )
 
     def _ceiling(reserve: float = 0.0) -> float:
@@ -329,9 +334,9 @@ def optimize(
         inst = peak_remaining - reserve
         return inst if proj_remaining is None else min(inst, proj_remaining)
 
-    def _note_peak_limited(uid: str) -> None:
-        if uid not in peak_limited:
-            peak_limited.append(uid)
+    # The quarter the shed lockout is keyed on; only meaningful with the
+    # demand feature (an instantaneous ceiling) on.
+    this_quarter = quarter_id(now) if peak_remaining is not None else None
 
     _LOGGER.debug(
         "optimize: %d appliance(s) in priority order | excess=%.2f A | peak headroom=%s",
@@ -397,17 +402,14 @@ def optimize(
         # Shed for peak earlier this quarter: stay off until the next one. A
         # restart would meet the same tight projection and be shed again a
         # few cycles later — that is the on/off sawing this exists to stop.
-        if demand is not None and state.peak_shed_quarter is not None:
-            if state.peak_shed_quarter != demand.quarter_id:
+        if this_quarter is not None and state.peak_shed_quarter is not None:
+            if state.peak_shed_quarter != this_quarter:
                 state.peak_shed_quarter = None
             elif not state.is_on:
                 _LOGGER.debug(
                     "  - %s: OFF, shed for peak this quarter; locked out until the next quarter",
                     name,
                 )
-                state.peak_gate_low_cycles = 0
-                state.last_fixed_amps = None
-                state.last_fixed_amps_change = None
                 continue
 
         # Hard peak cap: if the appliance can't reach its minimum from the budget
@@ -452,7 +454,7 @@ def optimize(
                 state.peak_gate_low_cycles = 0
             elif state.is_on and state.peak_gate_low_cycles + 1 < PEAK_GATE_SHED_CYCLES:
                 state.peak_gate_low_cycles += 1
-                _note_peak_limited(app.uid)
+                peak_limited.append(app.uid)
                 _LOGGER.info(
                     "%s: budget too low (%.1f A solar+grid available < %d A min) "
                     "for %d/%d cycles; throttling to min, not shedding yet",
@@ -466,17 +468,14 @@ def optimize(
                 if state.is_on:
                     state.is_on = False
                     state.last_change = now
-                    _note_peak_limited(app.uid)
-                    if demand is not None:
-                        state.peak_shed_quarter = demand.quarter_id
+                    peak_limited.append(app.uid)
+                    state.peak_shed_quarter = this_quarter
                     _LOGGER.info(
                         "%s: shed for the quarter-hour peak (%.1f A available < %d A min)%s",
                         name, reachable, min_a,
-                        "; locked out until the next quarter" if demand is not None else "",
+                        "; locked out until the next quarter" if this_quarter is not None else "",
                     )
-                state.peak_gate_low_cycles = 0
-                state.last_fixed_amps = None
-                state.last_fixed_amps_change = None
+                state.forget_setpoint()
                 continue
         else:
             state.peak_gate_low_cycles = 0
@@ -507,8 +506,12 @@ def optimize(
             # setpoint climb. The surplus add-back would otherwise feed a runaway
             # (add-back = setpoint → higher budget → higher setpoint → …) when the
             # grid can't confirm the extra draw — the same loop the power-sensor
-            # hold guards against. Ramp-DOWN is still allowed.
-            if hold_ramp and state.last_fixed_amps is not None:
+            # hold guards against. Ramp-DOWN is still allowed. The same clamp
+            # serves the post-cut hold: after a grid-ceiling cut (below) the
+            # load that caused it is usually still there, so the setpoint is
+            # not chased back up for PEAK_CUT_HOLD_SECONDS.
+            in_cut_hold = state.peak_cut_at is not None and now < state.peak_cut_at + _PEAK_CUT_HOLD
+            if (hold_ramp or in_cut_hold) and state.last_fixed_amps is not None:
                 scaled = min(scaled, state.last_fixed_amps)
 
             # Command the setpoint if a fixed_amps entity is configured.
@@ -524,32 +527,27 @@ def optimize(
                     # instead of sitting in a band wider than its own step.
                     deadband=app.fixed_amps_step / 2,
                     step=app.fixed_amps_step,
-                    # Setpoint anti-flap: ramp up in bounded steps, and not
-                    # at all for a while after a grid-driven cut (below).
-                    max_step_up=FIXED_AMPS_MAX_STEP_UP,
-                    hold_up_until=(
-                        state.peak_cut_at + timedelta(seconds=PEAK_CUT_HOLD_SECONDS)
-                        if state.peak_cut_at is not None else None
-                    ),
+                    # Setpoint anti-flap with the demand feature on: ramp up
+                    # in bounded steps (a one-cycle budget glitch then moves
+                    # the setpoint by at most this much).
+                    max_step_up=FIXED_AMPS_MAX_STEP_UP if peak_remaining is not None else None,
                 )
-                # A downward write while the draw is not fully solar-funded is
-                # a grid-ceiling cut: a base-load step or the quarter
-                # tightening pushed the setpoint down. The load that caused it
-                # is usually still there, so upward writes are held for
-                # PEAK_CUT_HOLD_SECONDS instead of chasing the meter back up.
-                # Not inside the shed-debounce grace window: that throttle is
-                # the stale-add-back case (one short cycle after a start), and
-                # holding the recovery for a minute would slow every start.
-                if (
+                # A grid-ceiling cut: the setpoint came from the grid budget
+                # — neither floored at min_amps nor capped at max_amps — and
+                # went down, so a base-load step or the quarter tightening
+                # pushed it. That opens the post-cut hold above. A grace-cycle
+                # throttle is floored at min and so never counts (the stale
+                # add-back after a start must recover at once); a solar-mode
+                # setpoint follows the sun, not the ceiling, and never counts.
+                ceiling_bound = forced_additive and min_a < forced_budget < app.max_amps
+                wrote_down = (
                     decision.write_value is not None
                     and state.last_fixed_amps is not None
                     and decision.write_value < state.last_fixed_amps
-                    and peak_remaining is not None
-                    and scaled > max(remaining, 0.0)
-                    and state.peak_gate_low_cycles == 0
-                ):
+                )
+                if ceiling_bound and wrote_down:
                     state.peak_cut_at = now
-                    _note_peak_limited(app.uid)
+                    peak_limited.append(app.uid)
                     _LOGGER.info(
                         "%s: setpoint cut %.1f -> %.1f A for the grid ceiling; "
                         "no ramp-up for %ds",
@@ -582,33 +580,23 @@ def optimize(
                 "off" if peak_remaining is None else f"{peak_remaining:.2f} A",
             )
             decided_amps += used
-            if forced_additive:
-                solar_used = min(used, solar_avail)
-                remaining -= solar_used
-                peak_remaining -= used - solar_used
+            # A forced appliance's draw is solar first, grid for the rest; a
+            # solar mode's draw comes off the surplus in full (its min-floor
+            # top-up is the grid part). Peak headroom is GRID-import allowance
+            # (the demand math works on grid offtake): only the part of the
+            # draw beyond the available solar consumes it. Charging
+            # solar-covered draw against it would falsely starve downstream
+            # (forced) appliances of grid headroom that is actually untouched.
+            solar_used = min(used, solar_avail)
+            grid_used = max(used - solar_used, 0.0)
+            remaining -= solar_used if forced_additive else used
+            if peak_remaining is not None:
+                peak_remaining -= grid_used
                 if proj_remaining is not None:
-                    proj_remaining -= used - solar_used
-            else:
-                remaining -= used
-                if peak_remaining is not None:
-                    # Peak headroom is GRID-import allowance (the demand math
-                    # works on grid offtake): only the part of the draw beyond
-                    # the available solar consumes it. Charging solar-covered
-                    # draw against it would falsely starve downstream (forced)
-                    # appliances of grid headroom that is actually untouched.
-                    solar_used = min(used, solar_avail)
-                    peak_remaining -= max(used - solar_used, 0.0)
-                    if proj_remaining is not None:
-                        proj_remaining -= max(used - solar_used, 0.0)
+                    proj_remaining -= grid_used
         else:
             _LOGGER.debug("  - %s (mode=%s): OFF, run condition not met", name, mode)
-            # Forget the setpoint tracking: a re-activation must write a fresh
-            # setpoint immediately instead of silently holding the stale value
-            # through the hold window (e.g. switching back on at 16 A against a
-            # 6 A budget).
-            state.last_fixed_amps = None
-            state.last_fixed_amps_change = None
-            state.peak_cut_at = None
+            state.forget_setpoint()
 
     # One pass over ALL appliances (unmanaged and peak-gated ones included) so an
     # appliance that stops being active always resets its not-consuming timer.
@@ -636,7 +624,6 @@ def critical_shed(
     appliances: list[ApplianceInput],
     states: dict[str, ApplianceState],
     now,
-    quarter_id: int | None = None,
 ) -> ShedResult:
     """Shed load on critical demand, gracefully.
 
@@ -645,10 +632,11 @@ def critical_shed(
     minimum, or without an adjustable setpoint, are switched off. Returns the
     kept appliance uids/amps and the fixed_amps commands (throttle-to-min writes).
 
-    With ``quarter_id`` an appliance switched off is locked out of restarting
-    for the rest of that quarter (see ``ApplianceState.peak_shed_quarter``);
-    a throttled one gets the post-cut ramp-up hold.
+    An appliance switched off is locked out of restarting for the rest of
+    the current quarter (see ``ApplianceState.peak_shed_quarter``); a
+    throttled one gets the post-cut ramp-up hold.
     """
+    this_quarter = quarter_id(now)
     kept: list[str] = []
     kept_amps = 0.0
     commands: list[SetFixedAmps] = []
@@ -677,10 +665,8 @@ def critical_shed(
             # Already at min, or no adjustable setpoint: switch off.
             state.is_on = False
             state.last_change = now
-            state.last_fixed_amps = None
-            state.last_fixed_amps_change = None
-            if quarter_id is not None:
-                state.peak_shed_quarter = quarter_id
+            state.forget_setpoint()
+            state.peak_shed_quarter = this_quarter
             _LOGGER.warning(
                 "demand CRITICAL: %s shed (off)%s",
                 name, "" if app.has_fixed_amps else " (no adjustable setpoint)",

@@ -37,6 +37,13 @@ def calculate_excess_amps(
     return (solar_w - house_w) / voltage
 
 
+def kw_to_amps(kw: float | None, voltage: float) -> float | None:
+    """A power in kW as amps at ``voltage``; None when either is unusable."""
+    if kw is None or voltage <= 0:
+        return None
+    return kw * 1000.0 / voltage
+
+
 def scaled_amps(min_a: float, max_a: float, remaining_amps: float) -> float:
     """Scale amperage to the available excess, clamped between min and max."""
     if remaining_amps >= max_a:

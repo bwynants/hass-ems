@@ -1,6 +1,5 @@
 """Tests for ems_core.demand — quarter-hour projection + High/Critical latch."""
-from ems_core.demand import compute_demand, rest_of_quarter_ceiling_kw, projected_ceiling_amps
-from ems_core.models import DemandSnapshot
+from ems_core.demand import compute_demand, rest_of_quarter_kw
 
 
 def _demand(**kw):
@@ -62,33 +61,36 @@ def test_max_power_to_peak_cap():
 # --- rest-of-quarter projection (the proactive ceiling) ---------------------
 
 
-def test_rest_of_quarter_ceiling_basic():
+def test_rest_of_quarter_kw_basic():
     # 2.6 kW banked, 300 s left, aim 3.3 -> (3.3 - 2.6) * 900 / 300 = 2.1 kW
-    assert round(rest_of_quarter_ceiling_kw(2.6, 300, 3.3), 3) == 2.1
-    # 60 s in, having drawn exactly the aim so far (3.3 * 60/900 banked):
-    # the aim itself remains for the rest of the quarter
-    assert round(rest_of_quarter_ceiling_kw(3.3 * 60 / 900, 840, 3.3), 3) == 3.3
-    # ...and having drawn nothing yet, more than the aim may be drawn
-    assert rest_of_quarter_ceiling_kw(0.0, 840, 3.3) > 3.3
-
-
-def test_rest_of_quarter_ceiling_clamps_at_zero():
+    assert round(rest_of_quarter_kw(2.6, 300, 3.3), 3) == 2.1
+    # 60 s in, having drawn exactly the aim so far: the aim itself remains
+    assert round(rest_of_quarter_kw(3.3 * 60 / 900, 840, 3.3), 3) == 3.3
     # quarter already over the aim: nothing may be drawn, never negative
-    assert rest_of_quarter_ceiling_kw(3.5, 300, 3.3) == 0.0
+    assert rest_of_quarter_kw(3.5, 300, 3.3) == 0.0
 
 
-def test_rest_of_quarter_ceiling_skipped_at_the_boundary():
-    # first 60 s of a quarter: the source may still hold last quarter's value
-    assert rest_of_quarter_ceiling_kw(3.0, 900, 3.3) is None
-    assert rest_of_quarter_ceiling_kw(3.0, 841, 3.3) is None
-    assert rest_of_quarter_ceiling_kw(3.0, 840, 3.3) is not None
+def test_max_power_to_peak_uses_the_same_projection():
+    r = _demand(month_max_src=4.0, current_so_far=2.6, seconds_done=600, minute_in_quarter=10)
+    # high limit 3.6: (3.6 - 2.6) * 900 / 300 = 3.0 kW
+    assert round(r.max_power_to_peak, 3) == 3.0
 
 
-def test_projected_ceiling_amps_applies_margin_and_voltage():
-    snap = DemandSnapshot(quarter_id=1, so_far_kw=2.6, seconds_remaining=300,
-                          high_limit_kw=3.6, shed_margin_kw=0.3)
-    assert round(projected_ceiling_amps(snap, 230.0), 2) == round(2100 / 230, 2)
-    assert projected_ceiling_amps(snap, 0.0) is None
-    skip = DemandSnapshot(quarter_id=1, so_far_kw=2.6, seconds_remaining=890,
-                          high_limit_kw=3.6, shed_margin_kw=0.3)
-    assert projected_ceiling_amps(skip, 230.0) is None
+def test_projected_ceiling_aims_at_the_shed_limit():
+    r = _demand(month_max_src=4.0, current_so_far=2.6, seconds_done=600,
+                minute_in_quarter=10, shed_safety=0.3)
+    assert round(r.shed_limit, 3) == 3.3
+    assert round(r.projected_ceiling, 3) == 2.1
+    # no shed safety: the ceiling equals the High-limit projection
+    r = _demand(month_max_src=4.0, current_so_far=2.6, seconds_done=600, minute_in_quarter=10)
+    assert round(r.projected_ceiling, 3) == 3.0
+
+
+def test_projected_ceiling_skipped_in_the_first_minute():
+    # the source may still hold last quarter's value: no projection yet
+    stale = _demand(month_max_src=4.0, current_so_far=3.0, seconds_done=10,
+                    minute_in_quarter=0, shed_safety=0.3)
+    assert stale.projected_ceiling is None
+    ok = _demand(month_max_src=4.0, current_so_far=0.2, seconds_done=60,
+                 minute_in_quarter=1, shed_safety=0.3)
+    assert ok.projected_ceiling is not None

@@ -55,7 +55,6 @@ def decide(
     deadband: float = FIXED_AMPS_DEADBAND,
     step: float = FIXED_AMPS_STEP,
     max_step_up: float | None = None,
-    hold_up_until: datetime | None = None,
 ) -> FixedAmpsDecision:
     """Decide the effective amperage and whether to write a new setpoint.
 
@@ -64,12 +63,10 @@ def decide(
     changed target is written only once the hold window (``interval`` seconds)
     has elapsed; otherwise the setpoint is held (no write).
 
-    Upward moves are additionally damped, downward ones never are:
-    ``max_step_up`` caps how far above ``last_val`` one write may land (the
-    rest follows on later writes, each after its own hold window), and while
-    ``now < hold_up_until`` no upward write happens at all (the window a
-    grid-driven reduction opens — see PEAK_CUT_HOLD_SECONDS). A first write
-    has no reference and is not capped.
+    ``max_step_up`` caps how far above ``last_val`` one upward write may land
+    (the rest follows on later writes, each after its own hold window);
+    downward writes are never limited, and a first write has no reference
+    and is not capped.
     """
     target = step_target(scaled, min_a, max_a, last_val, deadband, step)
 
@@ -77,12 +74,9 @@ def decide(
     if last_val is None:
         return FixedAmpsDecision(effective=target, write_value=target)
 
-    if target > last_val:
-        if hold_up_until is not None and now < hold_up_until:
-            return FixedAmpsDecision(effective=last_val, write_value=None)
-        if max_step_up is not None:
-            capped = max(_quantise_down(last_val + max_step_up, step), float(last_val))
-            target = min(target, capped)
+    if target > last_val and max_step_up is not None:
+        capped = max(_quantise_down(last_val + max_step_up, step), float(last_val))
+        target = min(target, capped)
 
     if target == last_val:
         # Target unchanged. Skip only if the entity already holds it; if it has

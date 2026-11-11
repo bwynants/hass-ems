@@ -209,6 +209,12 @@
       },
       "max_power_to_peak_limit": {
         "name": "Max Power To Peak Limit"
+      },
+      "quarterly_demand_shed_limit": {
+        "name": "Quarterly Demand Shed Limit"
+      },
+      "projected_ceiling": {
+        "name": "Projected Ceiling"
       }
     },
     "binary_sensor": {

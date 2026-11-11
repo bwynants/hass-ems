@@ -34,6 +34,11 @@ _DEMAND_SENSORS: list[tuple[str, str, dict[str, str] | None]] = [
     ("high_limit", "quarterly_demand_high_limit", None),
     ("critical_limit", "quarterly_demand_critical_limit", None),
     ("max_power_to_peak", "max_power_to_peak_limit", None),
+    # Proactive peak control (0.7): the limit the projection aims for and the
+    # projected grid ceiling for the rest of the quarter (unknown during the
+    # first minute of a quarter, when the projection is skipped).
+    ("shed_limit", "quarterly_demand_shed_limit", None),
+    ("projected_ceiling", "projected_ceiling", None),
 ]
 
 

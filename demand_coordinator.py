@@ -27,16 +27,14 @@ from .const import (
     CONF_MINIMAL_PEAK_WARNING,
     CONF_PEAK_HIGH_SAFETY,
     CONF_PEAK_CRITICAL_SAFETY,
+    CONF_PEAK_SHED_SAFETY,
     DEFAULT_MINIMAL_PEAK_WARNING,
     DEFAULT_PEAK_HIGH_SAFETY,
     DEFAULT_PEAK_CRITICAL_SAFETY,
+    DEFAULT_PEAK_SHED_SAFETY,
     DEMAND_UPDATE_INTERVAL_SECONDS,
     DEMAND_STALE_SECONDS,
     DEMAND_QUARTER_SECONDS,
-    DEMAND_HIGH_ALERT_MINUTES,
-    DEMAND_CRITICAL_ALERT_MINUTES,
-    DEMAND_HIGH_ALERT_SUSTAIN_CYCLES,
-    DEMAND_CRITICAL_ALERT_SUSTAIN_CYCLES,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -74,11 +72,12 @@ class QuarterlyDemandCoordinator(DataUpdateCoordinator):
         # entity uses to fire each one exactly once.
         self._alert_state = DemandAlertState()
         self._alert_seq = 0
-        # Set by the control coordinator whenever it throttles or sheds for
-        # peak: until this instant the High/Critical announcement is held, so
-        # a risk EMS is already removing is only announced if it outlives
-        # the action.
-        self.peak_action_until = None
+        # Set by __init__.py after construction: the control coordinator,
+        # whose published ``peak_action_until`` holds the High/Critical
+        # announcement while it is throttling or shedding for peak, so a
+        # risk EMS is already removing is only announced if it outlives the
+        # action.
+        self.control_coordinator = None
         # Last known good readings, held when a source sensor is momentarily
         # unavailable: a dropout must not zero the estimate (which would
         # release the Critical latch mid-peak) or collapse the month max to
@@ -143,10 +142,8 @@ class QuarterlyDemandCoordinator(DataUpdateCoordinator):
             "critical": False,
             "previous_month_max": None,
             "alerts": [],
-            "so_far": None,
-            "seconds_remaining": None,
-            "quarter_id": None,
-            "peak_action": False,
+            "shed_limit": None,
+            "projected_ceiling": None,
         }
 
     def _emit_alert(self, alerts: list[dict], alert_type: str, **attrs) -> None:
@@ -223,6 +220,7 @@ class QuarterlyDemandCoordinator(DataUpdateCoordinator):
         minimal = float(config.get(CONF_MINIMAL_PEAK_WARNING, DEFAULT_MINIMAL_PEAK_WARNING))
         high_safety = float(config.get(CONF_PEAK_HIGH_SAFETY, DEFAULT_PEAK_HIGH_SAFETY))
         crit_safety = float(config.get(CONF_PEAK_CRITICAL_SAFETY, DEFAULT_PEAK_CRITICAL_SAFETY))
+        shed_safety = float(config.get(CONF_PEAK_SHED_SAFETY, DEFAULT_PEAK_SHED_SAFETY))
 
         # Pure quarter-hour math lives in the core library.
         r = compute_demand(
@@ -236,6 +234,7 @@ class QuarterlyDemandCoordinator(DataUpdateCoordinator):
             minute_in_quarter=minute_in_quarter,
             high_on=self._high_on,
             critical_on=self._critical_on,
+            shed_safety=shed_safety,
         )
         estimate = r.estimate
         month_max = r.month_max
@@ -254,15 +253,12 @@ class QuarterlyDemandCoordinator(DataUpdateCoordinator):
         # same quarter the persisted flags belong to.
         alerts: list[dict] = []
         quarter_id = int(now.timestamp() // DEMAND_QUARTER_SECONDS)
-        peak_action = self.peak_action_until is not None and now < self.peak_action_until
+        control_data = getattr(self.control_coordinator, "data", None) or {}
+        action_until = control_data.get("peak_action_until")
         alert_state, alert_types = step_alerts(
             self._alert_state, quarter_id=quarter_id, high=high, critical=critical,
             minute_in_quarter=minute_in_quarter,
-            hold=peak_action,
-            high_sustain=DEMAND_HIGH_ALERT_SUSTAIN_CYCLES,
-            critical_sustain=DEMAND_CRITICAL_ALERT_SUSTAIN_CYCLES,
-            high_alert_minute=DEMAND_HIGH_ALERT_MINUTES,
-            critical_alert_minute=DEMAND_CRITICAL_ALERT_MINUTES,
+            hold=action_until is not None and now < action_until,
         )
         for alert_type in alert_types:
             self._emit_alert(
@@ -313,9 +309,11 @@ class QuarterlyDemandCoordinator(DataUpdateCoordinator):
                     self._previous_month_max = month_max
                     dirty = True
 
-        if alert_state != self._alert_state:
-            self._alert_state = alert_state
+        # Compare the persisted slice only: the transient sustain counters
+        # change every cycle of a High and must not trigger a store write.
+        if alert_state.as_dict() != self._alert_state.as_dict():
             dirty = True
+        self._alert_state = alert_state
 
         if dirty:
             await self._store.async_save(
@@ -345,9 +343,10 @@ class QuarterlyDemandCoordinator(DataUpdateCoordinator):
             "critical": critical,
             "previous_month_max": round(self._previous_month_max, 2) if self._previous_month_max is not None else None,
             "alerts": alerts,
-            # The quarter as the optimizer projects it (see DemandSnapshot).
-            "so_far": round(current_so_far, 3),
-            "seconds_remaining": DEMAND_QUARTER_SECONDS - seconds_done,
-            "quarter_id": quarter_id,
-            "peak_action": peak_action,
+            # The optimizer's second grid ceiling (kW): the draw that ends the
+            # quarter at the shed limit, None at the quarter boundary.
+            "shed_limit": round(r.shed_limit, 2),
+            "projected_ceiling": (
+                round(r.projected_ceiling, 2) if r.projected_ceiling is not None else None
+            ),
         }

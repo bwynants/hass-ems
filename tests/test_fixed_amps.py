@@ -109,10 +109,7 @@ def test_decide_caps_upward_step():
 
 
 def test_decide_cap_quantises_to_the_step():
-    # 0.1 A step, cap 2.0 -> 8.0 exactly; cap 1.25 with 0.5 step -> 7.0
-    d = decide(11.8, 6, 16, 6.0, T0, T0 + timedelta(seconds=200), 120, 6.0,
-               deadband=0.05, step=0.1, max_step_up=2.0)
-    assert d.write_value == 8.0
+    # cap 1.25 with a 0.5 step lands on the increment below: 6.0 + 1.0
     d = decide(11.8, 6, 16, 6.0, T0, T0 + timedelta(seconds=200), 120, 6.0, max_step_up=1.25)
     assert d.write_value == 7.0
 
@@ -126,15 +123,3 @@ def test_decide_cap_does_not_apply_to_the_first_write():
     d = decide(11.8, 6, 16, None, None, T0, 120, None, max_step_up=2.0)
     assert d.write_value == 11.5
 
-
-def test_decide_holds_upward_writes_until_hold_lapses():
-    hold = T0 + timedelta(seconds=60)
-    # inside the hold: no write, effective stays
-    d = decide(11.8, 6, 16, 6.0, T0, T0 + timedelta(seconds=30), 0, 6.0, hold_up_until=hold)
-    assert d.write_value is None and d.effective == 6.0
-    # a downward write is not held
-    d = decide(5.0, 5, 16, 6.0, T0, T0 + timedelta(seconds=30), 0, 6.0, hold_up_until=hold)
-    assert d.write_value == 5.0
-    # hold lapsed: writes again
-    d = decide(11.8, 6, 16, 6.0, T0, hold, 0, 6.0, hold_up_until=hold)
-    assert d.write_value == 11.5

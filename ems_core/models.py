@@ -109,6 +109,19 @@ class ApplianceState:
     # PEAK_CUT_HOLD_SECONDS after it. Transient.
     peak_cut_at: datetime | None = None
 
+    def forget_setpoint(self) -> None:
+        """Drop the setpoint tracking when the appliance goes off.
+
+        A re-activation must write a fresh setpoint immediately instead of
+        silently holding the stale value through the hold window (e.g.
+        switching back on at 16 A against a 6 A budget); the peak-gate
+        counter and the post-cut hold belong to the run that just ended.
+        """
+        self.last_fixed_amps = None
+        self.last_fixed_amps_change = None
+        self.peak_cut_at = None
+        self.peak_gate_low_cycles = 0
+
 
 @dataclass
 class EnergyInput:
@@ -184,24 +197,6 @@ class ShedResult:
     fixed_amps_commands: list[SetFixedAmps]
 
 
-@dataclass(frozen=True)
-class DemandSnapshot:
-    """The quarter the optimizer projects against (kW and seconds).
-
-    ``so_far_kw`` is this quarter's energy so far expressed as its share of the
-    final quarter average (the current-average source: at a constant draw it
-    climbs linearly from 0 to that draw over the 15 minutes). ``high_limit_kw``
-    is the High limit; ``shed_margin_kw`` the margin under it the projection
-    aims for. ``quarter_id`` is ``timestamp // 900``, the key for the per-quarter
-    shed lockout.
-    """
-    quarter_id: int
-    so_far_kw: float
-    seconds_remaining: int
-    high_limit_kw: float
-    shed_margin_kw: float
-
-
 @dataclass
 class DemandResult:
     """Quarter-hour demand computation (all kW except the boolean flags).
@@ -216,3 +211,8 @@ class DemandResult:
     max_power_to_peak: float
     high: bool
     critical: bool
+    # High limit minus the shed safety: what the projected ceiling aims for.
+    shed_limit: float = 0.0
+    # Average draw from now to the quarter's end that ends it at shed_limit;
+    # the optimizer's second grid ceiling. None at the quarter boundary.
+    projected_ceiling: float | None = None
