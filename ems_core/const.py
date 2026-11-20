@@ -31,12 +31,6 @@ DEFAULT_AUTO_SWITCHING = True
 # side carries ON_OFF_HYSTERESIS_AMPS on top.
 DEFAULT_PARTIAL_MIN_EXCESS_AMPS = 4.0
 
-# Extra grid (peak) headroom, in amps, that a forced appliance leaves unused
-# when scaling against the quarter-hour demand limit. Filling the headroom
-# completely drives the peak to the cap, which sheds the appliance and causes
-# on/off oscillation; reserving this margin lets it run steadily below the cap.
-FORCED_PEAK_HEADROOM_AMPS = 1.0
-
 # Consecutive cycles the peak gate must see a RUNNING appliance's budget below
 # its min_amps before it is shed (3 cycles ≈ 30 s at the 10 s interval). The
 # appliance's own draw is added back into the budget from its power sensor,
@@ -152,6 +146,14 @@ DEMAND_CRITICAL_ALERT_SUSTAIN_CYCLES = 2
 # announcement for this long after its last action: warn only if the
 # situation is still there once the shed has had its effect on the meter.
 PEAK_ACTION_HOLD_SECONDS = 60
+
+# How long Critical (and High with it) may be held back while a managed
+# appliance is still running and the estimate is over the Critical limit.
+# Normally the optimizer has shed the appliance long before; if it has not
+# after this long, its view of the grid disagrees with the demand side (a
+# frozen or wrong grid sensor), and the hold-back lapses so the Critical
+# backstop sheds regardless.
+CRITICAL_HOLD_BACK_SECONDS = 60
 
 # Proactive peak control. The optimizer projects the quarter: the grid draw
 # that would end the quarter at (High limit − this margin) becomes the

@@ -8,6 +8,7 @@ from .const import (
     DEMAND_HIGH_GATE_MINUTES,
     DEMAND_CRITICAL_GATE_MINUTES,
     DEMAND_PROJECTION_SKIP_SECONDS,
+    CRITICAL_HOLD_BACK_SECONDS,
 )
 from .models import DemandResult
 
@@ -32,6 +33,8 @@ def compute_demand(
     high_on: bool,
     critical_on: bool,
     shed_safety: float = 0.0,
+    sheddable_on: bool = False,
+    held_seconds: float = 0.0,
 ) -> DemandResult:
     """Project quarter-hour demand and derive High/Critical state.
 
@@ -42,6 +45,24 @@ def compute_demand(
     the returned ``high``/``critical`` are the new latch state. ``shed_safety``
     (kW under the High limit) sets the shed limit the projected ceiling aims
     for.
+
+    ``sheddable_on`` is True while the controller still has a managed
+    appliance drawing power. High then never latches (and a latched High is
+    released): High means "a peak risk EMS cannot remove itself", and as long
+    as there is load to cut or shed the controller does that instead. Once
+    nothing sheddable is left the flag latches on the next cycle if the
+    estimate is still at the limit. Critical is held back with it: it never
+    stands without High, so it cannot latch either while an appliance is
+    still running. The optimizer's own peak gate (projected ceiling, throttle
+    to min, shed) is then what removes the load; the Critical backstop only
+    comes into play once the controller has nothing active left.
+
+    That hold-back is bounded. ``held_seconds`` is how long the estimate has
+    been over the Critical limit with an appliance still running (the shell
+    times the returned ``critical_held``). Past CRITICAL_HOLD_BACK_SECONDS
+    the optimizer evidently is not shedding — its grid reading disagrees with
+    the demand side — so the gate lapses: High and Critical latch together
+    and the backstop sheds.
     """
     seconds_remaining = max(DEMAND_QUARTER_SECONDS - seconds_done, 1)
 
@@ -74,12 +95,22 @@ def compute_demand(
     else:
         high = estimate >= high_limit
 
-    if minute_in_quarter < DEMAND_CRITICAL_GATE_MINUTES:
+    # Critical never stands without High (the limits and gate minutes are
+    # config and constants; this keeps the order whatever they are).
+    if minute_in_quarter < DEMAND_CRITICAL_GATE_MINUTES or not high:
         critical = False
     elif critical_on:
         critical = estimate >= (critical_limit - DEMAND_HYSTERESIS_KW)
     else:
         critical = estimate >= critical_limit
+
+    # The appliance gate: while the controller still has load to shed, both
+    # flags are held back — unless Critical has been pending behind the gate
+    # for too long, which means the controller is not shedding.
+    critical_held = sheddable_on and critical
+    if sheddable_on and not (critical and held_seconds >= CRITICAL_HOLD_BACK_SECONDS):
+        high = False
+        critical = False
 
     return DemandResult(
         estimate=estimate,
@@ -89,6 +120,7 @@ def compute_demand(
         max_power_to_peak=max_power_to_peak,
         high=high,
         critical=critical,
+        critical_held=critical_held,
         shed_limit=shed_limit,
         projected_ceiling=projected_ceiling,
     )

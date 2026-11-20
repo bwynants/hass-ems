@@ -211,6 +211,11 @@ class DemandResult:
     max_power_to_peak: float
     high: bool
     critical: bool
+    # True while the estimate is over the Critical limit and a managed
+    # appliance is still running: the shell times this (see
+    # CRITICAL_HOLD_BACK_SECONDS) and feeds the duration back as
+    # ``held_seconds``.
+    critical_held: bool = False
     # High limit minus the shed safety: what the projected ceiling aims for.
     shed_limit: float = 0.0
     # Average draw from now to the quarter's end that ends it at shed_limit;

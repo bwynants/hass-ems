@@ -340,7 +340,7 @@ def test_off_peak_night_scales_like_forced():
     res = optimize([app], states, excess_amps=0.0, peak_amps=20.0,
                    energy=_energy(off_peak=True, solar_w=0.0), now=T0)
     assert res.active == ["a"]
-    # forced_budget = 0 + (20 - 2 reserve) = 18 -> scaled to max 16.
+    # forced_budget = 0 + 20 = 20 -> scaled to max 16.
     assert res.fixed_amps_commands[0].value == 16.0
 
 
@@ -556,12 +556,12 @@ def test_peak_cap_off_goes_through_state_machine():
     r3b = optimize([app], states, excess_amps=0.0, peak_amps=8.0,
                    energy=_energy(), now=t_off + timedelta(seconds=80))
     assert r3b.active == []
-    # Next quarter -> on again with a FRESH setpoint write. Budget = 8 A peak
-    # minus the 1 A forced reserve = 7 A -> written 6.5 A (not the stale 16).
+    # Next quarter -> on again with a FRESH setpoint write. Budget = the 8 A
+    # peak ceiling -> written 7.5 A (not the stale 16).
     r4 = optimize([app], states, excess_amps=0.0, peak_amps=8.0,
                   energy=_energy(), now=t_off + timedelta(seconds=900))
     assert r4.active == ["a"]
-    assert r4.fixed_amps_commands == [SetFixedAmps("a", 6.5)]
+    assert r4.fixed_amps_commands == [SetFixedAmps("a", 7.5)]
 
 
 def test_peak_gate_grace_resets_when_budget_recovers():
@@ -577,14 +577,14 @@ def test_peak_gate_grace_resets_when_budget_recovers():
     states = {"a": ApplianceState(is_on=True, last_change=T0 - timedelta(hours=1),
                                   last_fixed_amps=12.0, last_fixed_amps_change=T0)}
     energy = _energy()
-    # Stale add-back: budget -9 + (15.5 - 1) = 5.5 A < 6 A min. Kept on, but
+    # Stale add-back: budget -10 + 15.5 = 5.5 A < 6 A min. Kept on, but
     # throttled to min meanwhile (a real overload is curbed at once).
-    r1 = optimize([app], states, excess_amps=-9.0, peak_amps=15.5,
+    r1 = optimize([app], states, excess_amps=-10.0, peak_amps=15.5,
                   energy=energy, now=T0)
     assert r1.active == ["a"]
     assert r1.fixed_amps_commands == [SetFixedAmps("a", 6.0)]
     assert states["a"].peak_gate_low_cycles == 1
-    # Fresh add-back: budget -2.7 + 14.5 = 11.8 A -> fine, counter cleared and
+    # Fresh add-back: budget -2.7 + 15.5 = 12.8 A -> fine, counter cleared and
     # the setpoint scales back up. The grace throttle is NOT a grid cut (no
     # ramp-up hold), but the ramp cap applies: 6 -> 8 A on this write, the
     # rest on the following ones.
@@ -595,7 +595,7 @@ def test_peak_gate_grace_resets_when_budget_recovers():
     assert states["a"].peak_cut_at is None
     assert r2.fixed_amps_commands == [SetFixedAmps("a", 8.0)]
     # Another isolated short cycle later starts counting from 1 again.
-    r3 = optimize([app], states, excess_amps=-9.0, peak_amps=15.5,
+    r3 = optimize([app], states, excess_amps=-10.0, peak_amps=15.5,
                   energy=energy, now=T0 + timedelta(seconds=20))
     assert r3.active == ["a"]
     assert states["a"].peak_gate_low_cycles == 1
@@ -625,18 +625,18 @@ def test_solar_covered_draw_keeps_peak_headroom():
     assert res.active == ["s", "f"]
 
 
-def test_forced_reserves_peak_headroom():
-    # Forced leaves 1 A of grid headroom unused so it doesn't scale up to the
-    # demand cap (which would shed it). With 10 A peak headroom and no solar it
-    # targets 9 A (10 - 1), written as 8.5 A — not the 9.5 A it would take if it
-    # consumed the whole headroom. ~1 A of peak headroom is left over.
+def test_forced_scales_to_the_full_high_ceiling():
+    # Without a projection (the first minute of a quarter) a forced appliance
+    # may use the whole instantaneous ceiling: no reserve is held back, the
+    # projected ceiling's shed margin is the only safety (0.8). 10.3 A of
+    # ceiling and no solar -> 10.0 A written (quantised down, not 9.x).
     app = _app(mode=MODE_FORCED, min_amps=6, max_amps=16,
                has_fixed_amps=True, fixed_amps_value=6.0)
     states = {}
-    res = optimize([app], states, excess_amps=0.0, peak_amps=10.0,
+    res = optimize([app], states, excess_amps=0.0, peak_amps=10.3,
                    energy=_energy(), now=T0)
     assert res.active == ["a"]
-    assert res.fixed_amps_commands[0].value == 8.5
+    assert res.fixed_amps_commands[0].value == 10.0
 
 
 def test_forced_additive_split_seen_by_second_appliance():
@@ -1132,13 +1132,11 @@ def _running(last=11.5):
 
 
 def test_projected_ceiling_lowers_setpoint_before_the_gate():
-    # Instantaneous budget: -3 + (15.65 - 1 reserve) = 11.65 A -> holds 11.5.
+    # Instantaneous budget: -3 + 15.65 = 12.65 A, room to spare.
     # But the quarter has over-consumed: the demand side projects that only
     # 2.1 kW = 9.13 A may be drawn from now on. The setpoint is cut to what
     # fits (9.13 - 3.0 base = 6.13 -> 6.0) at once; the appliance keeps
-    # running (6.13 >= min 6), nothing is shed. Each ceiling carries one
-    # safety: stacking the 1 A reserve on the projected one would give
-    # 5.13 A and shed the appliance for nothing.
+    # running (6.13 >= min 6), nothing is shed.
     app = _charger()
     states = _running()
     res = optimize([app], states, excess_amps=BASE_A, peak_amps=PEAK_A,
@@ -1153,8 +1151,8 @@ def test_projected_ceiling_lowers_setpoint_before_the_gate():
 
 def test_projected_ceiling_never_looser_than_instantaneous():
     # A quiet quarter: the projection would allow 9.3 kW. The instantaneous
-    # High ceiling stays the floor, so the result is identical to a cycle
-    # without the projection (reserve included).
+    # High ceiling stays the cap, so the result is identical to a cycle
+    # without the projection.
     app = _charger()
     without = optimize([app], _running(), excess_amps=BASE_A, peak_amps=PEAK_A,
                        energy=_energy(), now=T0)
@@ -1165,18 +1163,40 @@ def test_projected_ceiling_never_looser_than_instantaneous():
     assert with_.peak_limited == []
 
 
-def test_two_ceilings_do_not_saw_when_the_binding_one_changes_hands():
-    # Instantaneous ceiling minus reserve = 14.65 A; a projected ceiling that
-    # hovers just around it must not move the budget by the reserve: the
-    # effective ceiling is min(14.65, projected), continuous.
-    app = _charger()
-    r1 = optimize([app], _running(), excess_amps=BASE_A, peak_amps=PEAK_A,
-                  energy=_energy(), now=T0, proj_amps=14.6)
-    r2 = optimize([app], _running(), excess_amps=BASE_A, peak_amps=PEAK_A,
-                  energy=_energy(), now=T0, proj_amps=14.7)
-    v1 = r1.fixed_amps_commands[0].value if r1.fixed_amps_commands else 11.5
-    v2 = r2.fixed_amps_commands[0].value if r2.fixed_amps_commands else 11.5
-    assert abs(v1 - v2) <= 0.5
+def test_steady_forced_quarter_stays_under_high_without_a_reserve():
+    # Closed loop over one quarter, 10 s cycles: a forced charger on a steady
+    # 0.7 kW base load, the demand side projecting toward a shed limit 0.2 kW
+    # under High. With no reserve on the instantaneous ceiling the estimate
+    # must still stay under High all quarter, and the quarter end near the
+    # shed limit rather than far below it.
+    from ems_core.demand import compute_demand
+    base_kw, volt, shed_safety = 0.7, 230.0, 0.2
+    month_max = HIGH_KW + 0.3
+    app_kw = dict(fixed_amps_step=0.1) if "fixed_amps_step" in ApplianceInput.__dataclass_fields__ else {}
+    states = _running(last=6.0)
+    setpoint, energy_kws, worst = 6.0, 0.0, 0.0
+    for sec in range(0, 900, 10):
+        draw_kw = base_kw + setpoint * volt / 1000
+        so_far = energy_kws / 900
+        d = compute_demand(
+            current_so_far=so_far, power_consumed=draw_kw, month_max_src=month_max,
+            minimal=0.0, high_safety=0.3, crit_safety=0.2, seconds_done=sec,
+            minute_in_quarter=sec // 60, high_on=False, critical_on=False,
+            shed_safety=shed_safety,
+        )
+        assert d.high is False
+        worst = max(worst, d.estimate)
+        proj = None if d.projected_ceiling is None else d.projected_ceiling * 1000 / volt
+        r = optimize([_charger(fixed_amps_value=setpoint, measured_amps=setpoint, **app_kw)],
+                     states, excess_amps=-base_kw * 1000 / volt, peak_amps=PEAK_A,
+                     energy=_energy(), now=T0 + timedelta(seconds=sec), proj_amps=proj)
+        assert r.active == ["a"]
+        if r.fixed_amps_commands:
+            setpoint = r.fixed_amps_commands[0].value
+        energy_kws += (base_kw + setpoint * volt / 1000) * 10
+    final = energy_kws / 900
+    assert worst < HIGH_KW
+    assert abs(final - (HIGH_KW - shed_safety)) < 0.05
 
 
 def test_projected_shed_locks_out_until_next_quarter():
@@ -1212,34 +1232,34 @@ def test_projected_shed_locks_out_until_next_quarter():
 
 
 def test_grid_cut_holds_ramp_up_then_ramps_in_steps():
-    # A 1.2 kW base-load step: budget -8 + 14.65 = 6.65 A -> cut 11.5 -> 6.5
+    # A 1.2 kW base-load step: budget -8 + 15.65 = 7.65 A -> cut 11.5 -> 7.5
     # at once (ramp-down is never damped). The load goes away 10 s later but
     # the setpoint stays put for PEAK_CUT_HOLD_SECONDS, then climbs by at most
     # FIXED_AMPS_MAX_STEP_UP per write.
     app = _charger()
     states = _running()
     r = optimize([app], states, excess_amps=-8.0, peak_amps=PEAK_A, energy=_energy(), now=T0)
-    assert r.fixed_amps_commands == [SetFixedAmps("a", 6.5)]
+    assert r.fixed_amps_commands == [SetFixedAmps("a", 7.5)]
     assert r.peak_limited == ["a"]
     assert states["a"].peak_cut_at == T0
     # (the entity follows each write; a lagging one would be re-asserted)
-    r = optimize([_charger(fixed_amps_value=6.5)], states, excess_amps=BASE_A, peak_amps=PEAK_A,
+    r = optimize([_charger(fixed_amps_value=7.5)], states, excess_amps=BASE_A, peak_amps=PEAK_A,
                  energy=_energy(), now=T0 + timedelta(seconds=10))
     assert r.active == ["a"] and r.fixed_amps_commands == []
     assert r.peak_limited == []
     t = T0 + timedelta(seconds=PEAK_CUT_HOLD_SECONDS)
-    r = optimize([_charger(fixed_amps_value=6.5)], states, excess_amps=BASE_A, peak_amps=PEAK_A,
+    r = optimize([_charger(fixed_amps_value=7.5)], states, excess_amps=BASE_A, peak_amps=PEAK_A,
                  energy=_energy(), now=t)
-    assert r.fixed_amps_commands == [SetFixedAmps("a", 6.5 + FIXED_AMPS_MAX_STEP_UP)]
-    r = optimize([_charger(fixed_amps_value=8.5)], states, excess_amps=BASE_A, peak_amps=PEAK_A,
+    assert r.fixed_amps_commands == [SetFixedAmps("a", 7.5 + FIXED_AMPS_MAX_STEP_UP)]
+    r = optimize([_charger(fixed_amps_value=9.5)], states, excess_amps=BASE_A, peak_amps=PEAK_A,
                  energy=_energy(), now=t + timedelta(seconds=10))
-    assert r.fixed_amps_commands == [SetFixedAmps("a", 6.5 + 2 * FIXED_AMPS_MAX_STEP_UP)]
-    # 11.65 A budget quantises down with the half-step deadband to 11.0, and
-    # holds there (11.65 is inside the [10.75, 11.75) band of 11.0).
-    r = optimize([_charger(fixed_amps_value=10.5)], states, excess_amps=BASE_A, peak_amps=PEAK_A,
+    assert r.fixed_amps_commands == [SetFixedAmps("a", 7.5 + 2 * FIXED_AMPS_MAX_STEP_UP)]
+    # 12.65 A budget quantises down with the half-step deadband to 12.0, and
+    # holds there (12.65 is inside the [11.75, 12.75) band of 12.0).
+    r = optimize([_charger(fixed_amps_value=11.5)], states, excess_amps=BASE_A, peak_amps=PEAK_A,
                  energy=_energy(), now=t + timedelta(seconds=20))
-    assert r.fixed_amps_commands == [SetFixedAmps("a", 11.0)]
-    r = optimize([_charger(fixed_amps_value=11.0)], states, excess_amps=BASE_A,
+    assert r.fixed_amps_commands == [SetFixedAmps("a", 12.0)]
+    r = optimize([_charger(fixed_amps_value=12.0)], states, excess_amps=BASE_A,
                  peak_amps=PEAK_A, energy=_energy(), now=t + timedelta(seconds=30))
     assert r.fixed_amps_commands == []
 
@@ -1253,7 +1273,7 @@ def test_cut_hold_still_reasserts_a_drifted_entity():
     drifted = _charger(fixed_amps_value=16.0)
     r = optimize([drifted], states, excess_amps=BASE_A, peak_amps=PEAK_A, energy=_energy(),
                  now=T0 + timedelta(seconds=10))
-    assert r.fixed_amps_commands == [SetFixedAmps("a", 6.5)]
+    assert r.fixed_amps_commands == [SetFixedAmps("a", 7.5)]
 
 
 def test_ramp_cap_only_with_the_demand_feature():

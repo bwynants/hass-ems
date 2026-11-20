@@ -16,6 +16,7 @@ from .const import (
     CONF_ENTITY_ID, CONF_POWER_SENSOR, CONF_FIXED_AMPS, CONF_CONNECTED_SENSOR,
     CONF_DEMAND_POWER_CONSUMED_SENSOR, MODE_UNMANAGED, STARTUP_GRACE_SECONDS,
     PEAK_ACTION_HOLD_SECONDS,
+    NOT_CONSUMING_AMPS,
 )
 from .helpers import read_sensor, sensors_stale, not_ready_entities
 from . import control
@@ -649,4 +650,13 @@ class SolarApplianceCoordinator(DataUpdateCoordinator):
             # Managed Consumption updates this cycle instead of lagging one.
             "managed_amps": round(result.decided_amps, 2),
             "managed_power": _kw(result.decided_amps),
+            # True while a managed appliance is still drawing, i.e. there is
+            # load left to cut or shed: the demand side then keeps the High
+            # flag off (see compute_demand). Judged on the draw decided this
+            # cycle, so a shed clears it at once and a full car drawing
+            # nothing does not hide a real risk. Absent (= False) in the
+            # warm-up, auto-switching-off and critical results: EMS is not
+            # (or no longer) running anything there, so High and Critical
+            # must stay able to fire.
+            "peak_sheddable": result.decided_amps > NOT_CONSUMING_AMPS,
         }

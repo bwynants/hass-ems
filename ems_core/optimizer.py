@@ -14,7 +14,7 @@ import logging
 from .const import (
     MODE_FORCED, MODE_PARTIAL_SOLAR, MODE_FULL_SOLAR, MODE_OFF_PEAK, MODE_UNMANAGED,
     CONTROLLER_UPDATE_INTERVAL, DEMAND_QUARTER_SECONDS,
-    FORCED_PEAK_HEADROOM_AMPS, SUNDOWN_SOLAR_W, ON_OFF_HYSTERESIS_AMPS,
+    SUNDOWN_SOLAR_W, ON_OFF_HYSTERESIS_AMPS,
     PEAK_GATE_SHED_CYCLES, FIXED_AMPS_MAX_STEP_UP, PEAK_CUT_HOLD_SECONDS,
     NOT_CONSUMING_AMPS, NOT_CONSUMING_GRACE_SECONDS, SOC_FULL_PERCENT,
 )
@@ -311,16 +311,17 @@ def optimize(
     decided_amps = 0.0
     peak_remaining = peak_amps
 
-    # The projected ceiling is kept NEXT TO the instantaneous one rather than
-    # folded into it: each carries its own safety (the forced reserve on the
-    # instantaneous ceiling, the shed margin on the projected one) and the
-    # effective ceiling is the lower of the two. Folding them with a
-    # conditional reserve made the budget jump by the reserve each time the
-    # binding ceiling changed hands — a 1 A sawtooth over every quarter in the
-    # 2026-11-03 replay. The projection can only tighten: late in a quarter
-    # that started quietly it allows far more than the High limit, and the
-    # minimum keeps the instantaneous bound as the floor. Both are drawn down
-    # by the grid draw allocated below.
+    # Two ceilings, the effective one being the lower. The instantaneous one
+    # is the High limit itself; the projected one aims the quarter at the
+    # shed limit (High − the shed margin), which is the only safety: in a
+    # steady quarter it binds from the first minute and keeps the estimate
+    # under High, so no extra reserve is held back on the instantaneous
+    # ceiling (the 1 A forced reserve of 0.7.0 is gone). The projection can
+    # only tighten: late in a quarter that started quietly it allows far more
+    # than the High limit, and the minimum keeps the instantaneous bound as
+    # the cap — the average so far is below High then, so drawing at High for
+    # the rest still ends below it. Both are drawn down by the grid draw
+    # allocated below.
     proj_remaining = proj_amps if peak_remaining is not None else None
     if proj_remaining is not None:
         _LOGGER.debug(
@@ -328,11 +329,11 @@ def optimize(
             peak_remaining, proj_remaining,
         )
 
-    def _ceiling(reserve: float = 0.0) -> float:
-        """Grid headroom still available: the tighter ceiling, reserve applied
-        to the instantaneous one only (the projected one has its margin)."""
-        inst = peak_remaining - reserve
-        return inst if proj_remaining is None else min(inst, proj_remaining)
+    def _ceiling() -> float:
+        """Grid headroom still available: the tighter of the two ceilings."""
+        if proj_remaining is None:
+            return peak_remaining
+        return min(peak_remaining, proj_remaining)
 
     # The quarter the shed lockout is keyed on; only meaningful with the
     # demand feature (an instantaneous ceiling) on.
@@ -387,14 +388,10 @@ def optimize(
         forced_additive = (mode == MODE_FORCED or off_peak_night) and peak_remaining is not None
         solar_avail = max(remaining, 0.0)
         if forced_additive:
-            # Reserve FORCED_PEAK_HEADROOM_AMPS of the grid (peak) headroom so the
-            # appliance doesn't scale right up to the quarter-hour demand limit —
-            # filling it completely pushes the peak to the cap and gets the
-            # appliance shed, causing on/off oscillation. Solar is used freely;
-            # only the grid portion is held back.
-            # The reserve applies to the instantaneous ceiling only; the
-            # projected ceiling carries the shed margin instead (see _ceiling).
-            grid_headroom = max(_ceiling(FORCED_PEAK_HEADROOM_AMPS), 0.0)
+            # Solar is used freely; the grid portion is bounded by the
+            # tighter ceiling (see _ceiling) — the projected one keeps the
+            # quarter under the High limit by the shed margin.
+            grid_headroom = max(_ceiling(), 0.0)
             forced_budget = remaining + grid_headroom
         else:
             forced_budget = None

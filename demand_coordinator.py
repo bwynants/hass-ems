@@ -56,6 +56,11 @@ class QuarterlyDemandCoordinator(DataUpdateCoordinator):
         self.entry = entry
         self._high_on = False
         self._critical_on = False
+        # Since when the estimate has been over the Critical limit with a
+        # managed appliance still running (Critical held back behind the
+        # appliance gate); None when that is not the case. Feeds the bounded
+        # hold-back in compute_demand.
+        self._critical_held_since = None
         # The month-max value before its most recent change (the "was X kW"),
         # so a new monthly peak can be reported against the previous one.
         # Persisted so it survives restarts.
@@ -130,6 +135,7 @@ class QuarterlyDemandCoordinator(DataUpdateCoordinator):
         """Return the data shape used when the feature is not configured."""
         self._high_on = False
         self._critical_on = False
+        self._critical_held_since = None
         return {
             "configured": False,
             "sourced": False,
@@ -222,6 +228,17 @@ class QuarterlyDemandCoordinator(DataUpdateCoordinator):
         crit_safety = float(config.get(CONF_PEAK_CRITICAL_SAFETY, DEFAULT_PEAK_CRITICAL_SAFETY))
         shed_safety = float(config.get(CONF_PEAK_SHED_SAFETY, DEFAULT_PEAK_SHED_SAFETY))
 
+        # While the controller still has a managed appliance drawing power,
+        # High must not latch: the controller cuts or sheds that load first
+        # (see compute_demand). Its data is one cycle old at most; a failed
+        # controller update is ignored so a dead controller cannot mute High.
+        control = self.control_coordinator
+        control_data = getattr(control, "data", None) or {}
+        sheddable_on = bool(
+            control_data.get("peak_sheddable")
+            and getattr(control, "last_update_success", False)
+        )
+
         # Pure quarter-hour math lives in the core library.
         r = compute_demand(
             current_so_far=current_so_far,
@@ -235,7 +252,22 @@ class QuarterlyDemandCoordinator(DataUpdateCoordinator):
             high_on=self._high_on,
             critical_on=self._critical_on,
             shed_safety=shed_safety,
+            sheddable_on=sheddable_on,
+            held_seconds=(
+                (now - self._critical_held_since).total_seconds()
+                if self._critical_held_since is not None else 0.0
+            ),
         )
+        if not r.critical_held:
+            self._critical_held_since = None
+        elif self._critical_held_since is None:
+            self._critical_held_since = now
+        elif r.critical and not self._critical_on:
+            _LOGGER.warning(
+                "estimate over the Critical limit for %d s with a managed appliance "
+                "still running; hold-back lapsed, Critical backstop takes over",
+                (now - self._critical_held_since).total_seconds(),
+            )
         estimate = r.estimate
         month_max = r.month_max
         high_limit = r.high_limit
@@ -253,7 +285,6 @@ class QuarterlyDemandCoordinator(DataUpdateCoordinator):
         # same quarter the persisted flags belong to.
         alerts: list[dict] = []
         quarter_id = int(now.timestamp() // DEMAND_QUARTER_SECONDS)
-        control_data = getattr(self.control_coordinator, "data", None) or {}
         action_until = control_data.get("peak_action_until")
         alert_state, alert_types = step_alerts(
             self._alert_state, quarter_id=quarter_id, high=high, critical=critical,

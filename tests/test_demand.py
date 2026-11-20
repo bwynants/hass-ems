@@ -94,3 +94,105 @@ def test_projected_ceiling_skipped_in_the_first_minute():
     ok = _demand(month_max_src=4.0, current_so_far=0.2, seconds_done=60,
                  minute_in_quarter=1, shed_safety=0.3)
     assert ok.projected_ceiling is not None
+
+
+# --- High is gated while the controller still has load to shed (0.8) --------
+
+def test_high_not_latched_while_a_managed_appliance_draws():
+    # Estimate far over the High limit past the gate minute, but an appliance
+    # is still on: the controller cuts or sheds it first, High stays off.
+    r = _demand(current_so_far=3.0, power_consumed=6.0, seconds_done=420,
+                minute_in_quarter=7, sheddable_on=True)
+    assert r.estimate >= r.high_limit
+    assert r.high is False
+
+
+def test_high_latches_the_cycle_after_the_appliance_is_off():
+    kw = dict(current_so_far=3.0, power_consumed=6.0, seconds_done=420, minute_in_quarter=7)
+    assert _demand(sheddable_on=True, **kw).high is False
+    assert _demand(sheddable_on=False, **kw).high is True
+
+
+def test_latched_high_releases_when_an_appliance_starts():
+    # A latched High holds while nothing is sheddable; a managed appliance
+    # drawing again means there is load to shed, so it releases.
+    kw = dict(current_so_far=3.0, power_consumed=6.0, seconds_done=420, minute_in_quarter=7)
+    assert _demand(high_on=True, sheddable_on=False, **kw).high is True
+    assert _demand(high_on=True, sheddable_on=True, **kw).high is False
+
+
+def test_critical_is_held_back_while_high_is_gated():
+    # Critical never stands without High: with an appliance still running
+    # neither latches, however far over the limits the estimate is. Both
+    # latch the cycle after the appliance is off.
+    kw = dict(current_so_far=3.0, power_consumed=6.0, seconds_done=540, minute_in_quarter=9)
+    r = _demand(sheddable_on=True, **kw)
+    assert r.estimate >= r.critical_limit
+    assert r.high is False and r.critical is False
+    r = _demand(sheddable_on=False, **kw)
+    assert r.high is True and r.critical is True
+
+
+def test_latched_critical_releases_when_an_appliance_starts():
+    kw = dict(current_so_far=3.0, power_consumed=6.0, seconds_done=540, minute_in_quarter=9)
+    r = _demand(high_on=True, critical_on=True, sheddable_on=True, **kw)
+    assert r.high is False and r.critical is False
+
+
+def test_critical_always_implies_high():
+    # Across the quarter, both gate states and both latch histories.
+    for sec in range(0, 900, 30):
+        for sheddable in (False, True):
+            for high_on in (False, True):
+                for critical_on in (False, True):
+                    for consumed in (0.0, 4.3, 4.5, 4.7, 9.0):
+                        r = _demand(current_so_far=4.5 * sec / 900, power_consumed=consumed,
+                                    seconds_done=sec, minute_in_quarter=sec // 60,
+                                    sheddable_on=sheddable, high_on=high_on,
+                                    critical_on=critical_on)
+                        assert r.high or not r.critical
+                        r = _demand(current_so_far=4.5 * sec / 900, power_consumed=consumed,
+                                    seconds_done=sec, minute_in_quarter=sec // 60,
+                                    sheddable_on=sheddable, high_on=high_on,
+                                    critical_on=critical_on, held_seconds=120.0)
+                        assert r.high or not r.critical
+
+
+def test_critical_hold_back_lapses_after_the_time_limit():
+    # The optimizer should have shed long ago. If the estimate has been over
+    # the Critical limit with an appliance still running for the full limit,
+    # the gate lapses: High and Critical latch together (backstop sheds).
+    from ems_core.const import CRITICAL_HOLD_BACK_SECONDS
+    kw = dict(current_so_far=3.0, power_consumed=6.0, seconds_done=600,
+              minute_in_quarter=10, sheddable_on=True)
+    r = _demand(held_seconds=0.0, **kw)
+    assert r.critical_held is True
+    assert r.high is False and r.critical is False
+    r = _demand(held_seconds=CRITICAL_HOLD_BACK_SECONDS - 10, **kw)
+    assert r.high is False and r.critical is False
+    r = _demand(held_seconds=CRITICAL_HOLD_BACK_SECONDS, **kw)
+    assert r.high is True and r.critical is True
+    # Still reported as held, so the shell's timer keeps running and the
+    # flags don't drop back while the appliance is being shed.
+    assert r.critical_held is True
+
+
+def test_high_alone_is_held_back_without_a_time_limit():
+    # Over High but under Critical with an appliance running: nothing is
+    # pending behind the gate, the timer never starts, High stays off.
+    r = _demand(current_so_far=2.0, power_consumed=8.1, seconds_done=600,
+                minute_in_quarter=10, sheddable_on=True, held_seconds=600.0)
+    assert r.high_limit <= r.estimate < r.critical_limit
+    assert r.critical_held is False
+    assert r.high is False and r.critical is False
+
+
+def test_no_hold_without_a_running_appliance():
+    r = _demand(current_so_far=3.0, power_consumed=6.0, seconds_done=600, minute_in_quarter=10)
+    assert r.critical is True and r.critical_held is False
+
+
+def test_base_load_only_peak_still_latches_high():
+    # Nothing sheddable (a hob-only peak): unchanged behaviour.
+    r = _demand(current_so_far=3.0, power_consumed=6.0, seconds_done=480, minute_in_quarter=8)
+    assert r.high is True
