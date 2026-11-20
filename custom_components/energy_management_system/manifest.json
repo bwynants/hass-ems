@@ -3,7 +3,8 @@
   "name": "Energy Management System",
   "codeowners": ["@bwynants"],
   "config_flow": true,
-  "documentation": "https://github.com/bwynants/energy-management-system",
+  "documentation": "https://github.com/bwynants/hass-ems",
+  "issue_tracker": "https://github.com/bwynants/hass-ems/issues",
   "iot_class": "calculated",
   "version": "0.8.0"
 }

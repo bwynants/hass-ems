@@ -28,12 +28,31 @@ A Home Assistant custom integration (**EMS**) that automatically manages househo
 
 ## Installation
 
-1. Copy the `energy_management_system` folder into your `custom_components` directory (the folder name must match the integration domain):
+<!-- ha-marketplace:exclude-start -->
+[![Open your Home Assistant instance and show this repository in the Marketplace.](https://my.home-assistant.io/badges/marketplace_repository.svg)](https://my.home-assistant.io/redirect/marketplace_repository/?owner=bwynants&repository=hass-ems&category=integration)
+
+### Marketplace (Home Assistant 2026.11 or newer, recommended)
+
+1. Click the badge above, or open **Settings → Marketplace → Add from link** (top right; the Marketplace needs a GitHub account connected for custom repositories).
+2. Add `https://github.com/bwynants/hass-ems` with type **Integration**.
+3. Install **Energy Management System** and restart Home Assistant.
+
+### HACS (Home Assistant 2026.10 or older)
+
+1. In HACS, open the overflow menu → **Custom repositories**.
+2. Add `https://github.com/bwynants/hass-ems` with type **Integration**.
+3. Install **Energy Management System** and restart Home Assistant.
+
+### Manual installation
+
+1. Copy the `custom_components/energy_management_system/` folder into your HA `config/custom_components/` directory (the folder name must match the integration domain):
    ```
    config/custom_components/energy_management_system/
    ```
 2. Restart Home Assistant.
-3. Go to **Settings → Devices & Services → Add Integration** and search for **Energy Management System**.
+<!-- ha-marketplace:exclude-end -->
+
+After installing, go to **Settings → Devices & Services → Add Integration** and search for **Energy Management System**.
 
 ---
 
